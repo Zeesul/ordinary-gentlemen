@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The League of Ordinary Gentlemen</title>
+<meta name="description" content="Standings, head-to-head records, champions and the all-time record book for The League of Ordinary Gentlemen.">
+<link rel="preconnect" href="https://api.sleeper.app">
+<link rel="preconnect" href="https://sleepercdn.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap masthead-inner">
+    <a class="brand" href="#/">
+      <img class="brand-crest" src="https://sleepercdn.com/avatars/24b98e3e71272d75b29d392fbfd7cce1" alt="" onerror="this.remove()">
+      <span class="brand-text">
+        <span class="brand-name">The League of<br>Ordinary Gentlemen</span>
+        <span class="brand-sub">Est. 2022 &middot; 12 Teams &middot; PPR</span>
+      </span>
+    </a>
+    <button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <nav class="mainnav" id="mainnav">
+    <div class="wrap mainnav-inner">
+      <a href="#/" data-route="home">Home</a>
+      <a href="#/standings" data-route="standings">Standings</a>
+      <a href="#/playoffs" data-route="playoffs">Playoffs</a>
+      <a href="#/champions" data-route="champions">Champions</a>
+      <a href="#/h2h" data-route="h2h">Head&#8209;to&#8209;Head</a>
+      <a href="#/records" data-route="records">Record Book</a>
+      <a href="#/managers" data-route="managers">Managers</a>
+      <a href="#/draft" data-route="draft">Draft</a>
+      <a href="#/trades" data-route="trades">Trades</a>
+      <a href="#/money" data-route="money">Money</a>
+    </div>
+  </nav>
+</header>
+
+<main id="view" class="wrap"></main>
+
+<div id="boot" class="boot">
+  <div class="boot-card">
+    <div class="boot-spinner"></div>
+    <div class="boot-title">Loading league history</div>
+    <div class="boot-status" id="bootStatus">Contacting Sleeper&hellip;</div>
+    <div class="boot-bar"><div class="boot-bar-fill" id="bootBar"></div></div>
+  </div>
+</div>
+
+<footer class="footer">
+  <div class="wrap">
+    <p>Data pulled live from the Sleeper API. Nothing here is stored on a server &mdash; every page is built in your browser from the league's real history.</p>
+    <p class="footer-meta">
+      <a href="https://sleeper.com/leagues/1353221128079839232" target="_blank" rel="noopener">Open the league on Sleeper</a>
+      <span class="dot">&middot;</span>
+      <button class="linklike" id="refreshBtn">Force refresh data</button>
+      <span class="dot">&middot;</span>
+      <span id="cacheNote"></span>
+    </p>
+  </div>
+</footer>
+
+<script src="assets/data.js"></script>
+<script src="assets/payouts.js"></script>
+<script src="assets/model.js"></script>
+<script src="assets/charts.js"></script>
+<script src="assets/views.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
