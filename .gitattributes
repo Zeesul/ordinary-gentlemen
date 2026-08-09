@@ -1,0 +1,6 @@
+# Normalize line endings so Windows/Unix copies never show as fake changes
+* text=auto
+*.js text
+*.css text
+*.html text
+*.md text
