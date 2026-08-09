@@ -26,6 +26,25 @@ function mgrLink(id, text) {
 
 const money0 = v => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString();
 
+/* Player headshot from Sleeper's CDN. Team defenses use the team logo.
+   Sleeper only serves a player's *current* photo — there are no
+   year-by-year archives — so an old draft pick shows today's headshot.
+   Anyone missing (retired, never photographed) falls back to a silhouette. */
+function playerFace(id, cls) {
+  if (!id) return '';
+  const isTeam = !/^\d+$/.test(String(id));
+  // Use the full-size image, not /thumb/ — for newer players the thumb is
+  // noticeably smaller (250px vs 300px) and there's no bandwidth win worth
+  // the softness. Sleeper's photos are full-body cutouts, so the wrapper
+  // below crops and zooms to the head rather than squeezing in the torso.
+  const src = isTeam
+    ? `https://sleepercdn.com/images/team_logos/nfl/${String(id).toLowerCase()}.png`
+    : `https://sleepercdn.com/content/nfl/players/${encodeURIComponent(id)}.jpg`;
+  return `<span class="pface ${isTeam ? 'team' : ''} ${cls || ''}"><img src="${esc(src)}"
+    alt="" loading="lazy" decoding="async"
+    onerror="if(!this.dataset.f){this.dataset.f=1;this.classList.add('fallback');this.src='https://sleepercdn.com/images/v2/icons/player_default.webp'}"></span>`;
+}
+
 function recCard(label, value, who, when, tone) {
   return `<div class="rec ${tone || ''}">
     <div class="rec-label">${esc(label)}</div>
@@ -1012,7 +1031,8 @@ views.draft = params => {
       return `<tr>
         <td class="rank">${p.pick}</td>
         <td>${t ? mgrCell(t.ownerId, t.teamName) : '<span class="muted">Unknown</span>'}</td>
-        <td><strong>${esc(p.player)}</strong>${p.keeper ? ' <span class="pill pill-gold">Keeper</span>' : ''}</td>
+        <td><div class="pcell">${playerFace(p.playerId)}
+          <span><strong>${esc(p.player)}</strong>${p.keeper ? ' <span class="pill pill-gold">Keeper</span>' : ''}</span></div></td>
         <td><span style="color:${posColor(p.position)};font-weight:700">${esc(p.position)}</span></td>
         <td class="muted">${esc(p.team)}</td>
       </tr>`;
@@ -1026,17 +1046,23 @@ views.draft = params => {
 
   const firstRound = (rounds[1] || []).sort((a, b) => a.pick - b.pick).map(p => {
     const t = s.byRoster[p.rosterId];
-    return `<div class="stat">
+    return `<div class="stat pick-card">
       <div class="stat-label">Pick ${p.pick}</div>
-      <div class="stat-value" style="font-size:20px">${esc(p.player)}</div>
-      <div class="stat-meta">${esc(p.position)} &middot; ${esc(p.team)} &mdash; ${t ? mgrLink(t.ownerId) : '?'}</div>
+      <div class="pick-body">
+        ${playerFace(p.playerId, 'big')}
+        <div>
+          <div class="stat-value" style="font-size:19px">${esc(p.player)}</div>
+          <div class="stat-meta">${esc(p.position)} &middot; ${esc(p.team)}</div>
+        </div>
+      </div>
+      <div class="stat-meta" style="margin-top:6px">${t ? mgrLink(t.ownerId) : '?'}</div>
     </div>`;
   }).join('');
 
   const keepers = s.draft.picks.filter(p => p.keeper).map(p => {
     const t = s.byRoster[p.rosterId];
     return `<tr><td>${t ? mgrCell(t.ownerId) : '?'}</td>
-      <td><strong>${esc(p.player)}</strong></td>
+      <td><div class="pcell">${playerFace(p.playerId)}<span><strong>${esc(p.player)}</strong></span></div></td>
       <td>${esc(p.position)}</td><td class="num">Rd ${p.round}</td></tr>`;
   });
 
@@ -1091,8 +1117,9 @@ views.trades = async params => {
       const items = []
         .concat(gotPlayers.map(pid => {
           const p = playerMeta(pid);
-          return `<li><strong>${esc(p.name)}</strong>
-            <span class="muted small">${esc([p.pos, p.team].filter(Boolean).join(' · '))}</span></li>`;
+          return `<li class="has-face">${playerFace(pid)}
+            <span><strong>${esc(p.name)}</strong>
+            <span class="muted small">${esc([p.pos, p.team].filter(Boolean).join(' · '))}</span></span></li>`;
         }))
         .concat(gotPicks.map(p =>
           `<li><span class="pill pill-dim">Pick</span> ${esc(p.season)} round ${esc(p.round)}
@@ -1125,8 +1152,9 @@ views.trades = async params => {
       return `<tr>
         <td class="rank">${i + 1}</td>
         <td>${mgrCell(ownerOf(rid))}</td>
-        <td><strong>${esc(added ? playerMeta(added).name : '&mdash;')}</strong>
-          <span class="muted small">${esc(added ? playerMeta(added).pos : '')}</span></td>
+        <td><div class="pcell">${added ? playerFace(added) : ''}
+          <span><strong>${added ? esc(playerMeta(added).name) : '&mdash;'}</strong>
+          <span class="muted small">${esc(added ? playerMeta(added).pos : '')}</span></span></div></td>
         <td class="num gold-text">$${t.bid}</td>
         <td class="muted">Wk ${t.week}</td>
         <td class="muted small">${dropped ? 'dropped ' + esc(playerMeta(dropped).name) : ''}</td>
