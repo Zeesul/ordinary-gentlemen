@@ -154,7 +154,7 @@ views.home = () => {
   ${upcoming && upcoming.draftStart && upcoming.draftStatus === 'pre_draft' ? (() => {
       const d = new Date(upcoming.draftStart);
       const when = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) +
-        ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
       return `<div class="draft-hero" id="draftCountdown" data-ts="${upcoming.draftStart}">
       <div class="draft-hero-info">
         <div class="hero-eyebrow">${esc(upcoming.season)} Draft</div>
