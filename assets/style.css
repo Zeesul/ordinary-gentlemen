@@ -108,6 +108,36 @@ main{padding:34px 20px 70px;min-height:60vh}
 }
 .hero p{color:var(--ink-2);margin:0;max-width:62ch}
 
+/* ------------------------------ draft countdown --------------- */
+.draft-hero{
+  display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  background:linear-gradient(135deg,rgba(212,175,55,.12),var(--panel) 55%);
+  border:1px solid rgba(212,175,55,.35);border-radius:var(--radius);
+  padding:20px 24px;margin-bottom:18px;box-shadow:var(--shadow);
+}
+.draft-date{
+  font-family:"Barlow Condensed",Inter,sans-serif;font-size:25px;font-weight:700;
+  letter-spacing:.5px;margin:5px 0 3px;
+}
+.draft-timer{display:flex;gap:10px}
+.dt-tile{
+  background:rgba(13,17,23,.65);border:1px solid var(--line);border-radius:10px;
+  min-width:64px;padding:9px 6px 7px;text-align:center;
+}
+.dt-num{
+  display:block;font-family:"Barlow Condensed",Inter,sans-serif;font-size:30px;
+  font-weight:700;line-height:1;color:var(--gold);font-variant-numeric:tabular-nums;
+}
+.dt-label{display:block;color:var(--ink-3);font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;margin-top:4px}
+.dt-live{
+  font-family:"Barlow Condensed",Inter,sans-serif;font-size:22px;font-weight:700;
+  color:var(--gold);letter-spacing:.6px;
+}
+@media (max-width:680px){
+  .draft-hero{justify-content:center;text-align:center}
+  .dt-tile{min-width:58px}
+}
+
 /* ------------------------------ stat cards -------------------- */
 .stat{
   background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);

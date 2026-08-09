@@ -151,8 +151,30 @@ views.home = () => {
        pulled straight from Sleeper the moment you load the page.</p>
   </div>
 
+  ${upcoming && upcoming.draftStart && upcoming.draftStatus === 'pre_draft' ? (() => {
+      const d = new Date(upcoming.draftStart);
+      const when = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) +
+        ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      return `<div class="draft-hero" id="draftCountdown" data-ts="${upcoming.draftStart}">
+      <div class="draft-hero-info">
+        <div class="hero-eyebrow">${esc(upcoming.season)} Draft</div>
+        <div class="draft-date">${esc(when)}</div>
+        <a class="small" href="https://sleeper.com/draft/nfl/${esc(upcoming.draftId)}"
+          target="_blank" rel="noopener">Open the draft room &rarr;</a>
+      </div>
+      <div class="draft-timer">
+        <div class="dt-tile"><span class="dt-num" data-u="d">&ndash;</span><span class="dt-label">days</span></div>
+        <div class="dt-tile"><span class="dt-num" data-u="h">&ndash;</span><span class="dt-label">hours</span></div>
+        <div class="dt-tile"><span class="dt-num" data-u="m">&ndash;</span><span class="dt-label">min</span></div>
+        <div class="dt-tile"><span class="dt-num" data-u="s">&ndash;</span><span class="dt-label">sec</span></div>
+      </div>
+    </div>`;
+    })() : ''}
+
   ${upcoming ? `<div class="notice"><strong>${esc(upcoming.season)} season:</strong>
-      ${upcoming.status === 'pre_draft' ? 'the draft hasn\'t happened yet.' : 'getting started.'}
+      ${upcoming.status === 'pre_draft'
+        ? (upcoming.draftStart ? 'the draft is scheduled — countdown above.' : 'the draft hasn\'t been scheduled yet.')
+        : 'getting started.'}
       ${last ? `Everything below covers ${esc(MODEL.completedSeasons[0].season)}&ndash;${esc(last.season)}.` : ''}
       This page fills in on its own once games are played.</div>` : ''}
 

@@ -6,7 +6,7 @@
 const CONFIG = {
   leagueId: '1353221128079839232',
   api: 'https://api.sleeper.app/v1',
-  cacheKey: 'log_site_data_v4',
+  cacheKey: 'log_site_data_v5',
   playerKey: 'log_players_v1',
   txnKey: 'log_txn_v1_',
   cacheHours: 3,
@@ -305,6 +305,9 @@ async function loadSeason(lg) {
     started,
     inProgress: started && lg.status !== 'complete',
     numTeams: lg.total_rosters || teams.length,
+    draftStart: d0 && d0.start_time ? d0.start_time : null,
+    draftId: d0 ? d0.draft_id : null,
+    draftStatus: d0 ? d0.status : null,
     playoffStart,
     playoffTeams: st.playoff_teams || 6,
     lastLeg,

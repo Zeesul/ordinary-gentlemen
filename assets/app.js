@@ -96,6 +96,30 @@ function wirePage(route) {
     setHash('h2h', { active: h2hActive.checked ? '1' : '' }));
 
   wireCharts(host);
+
+  // draft countdown, ticking every second
+  clearInterval(wirePage._countdown);
+  const cd = $('#draftCountdown', host);
+  if (cd) {
+    const ts = Number(cd.dataset.ts);
+    const nums = {};
+    $$('.dt-num', cd).forEach(n => { nums[n.dataset.u] = n; });
+    const tick = () => {
+      let diff = Math.floor((ts - Date.now()) / 1000);
+      if (diff <= 0) {
+        clearInterval(wirePage._countdown);
+        $('.draft-timer', cd).innerHTML =
+          '<div class="dt-live">It\'s draft day — good luck, gentlemen.</div>';
+        return;
+      }
+      nums.d.textContent = Math.floor(diff / 86400);
+      nums.h.textContent = String(Math.floor(diff % 86400 / 3600)).padStart(2, '0');
+      nums.m.textContent = String(Math.floor(diff % 3600 / 60)).padStart(2, '0');
+      nums.s.textContent = String(diff % 60).padStart(2, '0');
+    };
+    tick();
+    wirePage._countdown = setInterval(tick, 1000);
+  }
 }
 
 const TITLES = {
