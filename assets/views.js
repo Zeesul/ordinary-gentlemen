@@ -431,7 +431,10 @@ views.champions = () => {
 
 /* =========================== HEAD TO HEAD ========================== */
 views.h2h = params => {
-  const ms = MODEL.managerList.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const onlyActive = params.active === '1';
+  const ms = MODEL.managerList
+    .filter(m => !onlyActive || m.active)
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
   const head = ['<th>Manager</th>'].concat(ms.map(m =>
     `<th title="${esc(m.name)}">${esc(m.name.slice(0, 7))}</th>`)).join('');
 
@@ -531,6 +534,10 @@ views.h2h = params => {
   <div class="page-head">
     <h1 class="page-title">Head to Head</h1>
     <p class="page-sub">All-time regular-season records. Read across: the row manager's record against each column.</p>
+  </div>
+  <div class="toolbar">
+    <label class="toggle"><input type="checkbox" id="h2hActive" ${onlyActive ? 'checked' : ''}>
+      <span>Current managers only</span></label>
   </div>
   <div class="h2h-wrap"><table class="h2h">
     <thead><tr>${head}<th>Total</th></tr></thead>
@@ -788,6 +795,7 @@ views.manager = params => {
   if (!m) return `<div class="empty">Manager not found. <a href="#/managers">Back to the list</a></div>`;
 
   const rank = MODEL.managerList.findIndex(x => x.id === m.id) + 1;
+  const holds = (MODEL.recordHolders || []).filter(r => r.owners.includes(m.id));
 
   const seasonRows = m.seasons.slice().reverse().map(s => `<tr class="${s.champion ? 'row-champ' : ''}">
     <td><strong>${esc(s.season)}</strong></td>
@@ -873,6 +881,7 @@ views.manager = params => {
         ${m.thirds ? `<span class="pill pill-bronze">${m.thirds}&times; third place</span>` : ''}
         ${m.consolations ? `<span class="pill pill-teal">${m.consolations}&times; consolation champ</span>` : ''}
         ${m.regularTitles ? `<span class="pill pill-dim">${m.regularTitles}&times; top seed</span>` : ''}
+        ${holds.length ? `<span class="pill pill-gold">${holds.length} league record${holds.length === 1 ? '' : 's'}</span>` : ''}
         ${m.lastPlace ? `<span class="pill pill-red">${m.lastPlace}&times; last place</span>` : ''}
       </div>
     </div>
@@ -894,6 +903,22 @@ views.manager = params => {
         <span style="color:${m.net > 0 ? 'var(--green)' : m.net < 0 ? 'var(--red)' : 'inherit'}">
         ${m.net > 0 ? '+' : ''}${money0(m.net || 0)} net</span></div></div>
   </div>
+
+  <h3 class="section-title">Record Showcase</h3>
+  ${holds.length ? `
+    <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
+      League records currently held. These update themselves the moment someone breaks one.</p>
+    <div class="grid g4">${holds.map(r => `
+      <div class="rec showcase ${r.tone}">
+        <div class="rec-label">${esc(r.label)}</div>
+        <div class="rec-value">${esc(r.display)}</div>
+        <div class="rec-who">${esc(r.detail || 'all-time')}</div>
+        <div class="rec-when">${r.owners.length > 1
+        ? 'shared with ' + r.owners.filter(o => o !== m.id).map(o => esc(mgr(o).name)).join(', ')
+        : 'sole holder'}</div>
+      </div>`).join('')}</div>`
+      : `<div class="empty" style="padding:26px">No league records held &mdash; yet.
+        The <a href="#/records">record book</a> shows what's up for grabs.</div>`}
 
   ${formChart ? `<h3 class="section-title">Career Form</h3>${formChart}
     <p class="small muted" style="margin-top:8px">Every week they've played, against what the

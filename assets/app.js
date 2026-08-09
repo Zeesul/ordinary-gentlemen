@@ -91,6 +91,9 @@ function wirePage(route) {
   }
   const h2hClear = $('#h2hClear', host);
   if (h2hClear) h2hClear.addEventListener('click', () => setHash('h2h', {}));
+  const h2hActive = $('#h2hActive', host);
+  if (h2hActive) h2hActive.addEventListener('change', () =>
+    setHash('h2h', { active: h2hActive.checked ? '1' : '' }));
 
   wireCharts(host);
 }

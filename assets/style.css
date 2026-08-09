@@ -23,6 +23,12 @@
 
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
+html{scrollbar-color:#2a3648 var(--bg-2)}
+::selection{background:rgba(212,175,55,.3)}
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-track{background:var(--bg-2)}
+::-webkit-scrollbar-thumb{background:#2a3648;border-radius:6px;border:2px solid var(--bg-2)}
+::-webkit-scrollbar-thumb:hover{background:#3a4a63}
 body{
   background:
     radial-gradient(1100px 500px at 50% -180px, rgba(212,175,55,.10), transparent 70%),
@@ -206,8 +212,17 @@ a.trophy-mgr:hover img{border-color:var(--gold)}
 /* ------------------------------ record book ------------------- */
 .rec{
   background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--blue);
-  border-radius:10px;padding:15px 17px;
+  border-radius:10px;padding:15px 17px;transition:transform .15s,border-color .15s;
 }
+.rec:hover{transform:translateY(-1px)}
+.rec.showcase{
+  background:linear-gradient(155deg,rgba(212,175,55,.07),var(--panel) 60%);
+}
+.rec.showcase .rec-when{
+  color:var(--gold);font-size:10px;letter-spacing:1.3px;text-transform:uppercase;
+  font-weight:700;margin-top:5px;
+}
+.rec.showcase.cold .rec-when{color:var(--red)}
 .rec.hot{border-left-color:var(--gold)}
 .rec.cold{border-left-color:var(--red)}
 .rec-label{color:var(--ink-3);font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;font-weight:700}

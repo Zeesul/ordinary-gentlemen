@@ -162,6 +162,11 @@ function buildModel(raw) {
   const latestSeason = playedSeasons.length
     ? playedSeasons[playedSeasons.length - 1].season : null;
 
+  // "Active" = owns a roster in the newest season, even if it hasn't
+  // started yet. (Pre-draft rosters exist, so this is always known.)
+  const newest = seasons[seasons.length - 1];
+  const activeIds = new Set(newest ? newest.teams.map(t => t.ownerId) : []);
+
   const managerList = Object.values(managers).map(m => {
     const g = m.w + m.l + m.ties;
     m.games = g;
@@ -174,7 +179,7 @@ function buildModel(raw) {
     m.ppg = m.weeks ? m.pf / m.weeks : 0;
     m.papg = m.weeks ? m.pa / m.weeks : 0;
     m.diff = m.pf - m.pa;
-    m.active = m.seasons.some(s => s.season === seasons[seasons.length - 1].season);
+    m.active = activeIds.has(m.id);
     return m;
   }).sort((a, b) => b.adjWinPct - a.adjWinPct || b.pf - a.pf);
 
@@ -232,6 +237,73 @@ function buildModel(raw) {
     longestWinStreak, longestLossStreak
   };
 
+  /* ---------------- current record holders ------------------------------
+     Every league record and who holds it right now. Recomputed from
+     scratch each load, so the moment a record falls the showcase moves
+     to the new holder automatically. */
+  const recordHolders = (() => {
+    const list = [];
+    const add = (key, label, display, owners, detail, tone) => {
+      owners = (Array.isArray(owners) ? owners : [owners]).filter(Boolean);
+      if (!owners.length) return;
+      list.push({ key, label, display, owners, detail: detail || '', tone: tone || '' });
+    };
+    const wk = f => f ? `${f.season} · Week ${f.week}` : '';
+    const w = records.topWeeks[0], lo = records.lowWeeks[0],
+      bl = records.blowouts[0], nb = records.nailbiters[0],
+      sh = records.shootouts[0], ml = records.mostInLoss[0],
+      fw = records.fewestInWin[0],
+      bpf = records.bestSeasonPF[0], brec = records.bestSeasonRec[0];
+
+    if (w) add('topWeek', 'Highest single week', n2(w.pts), w.ownerId, wk(w), 'hot');
+    if (lo) add('lowWeek', 'Lowest single week', n2(lo.pts), lo.ownerId, wk(lo), 'cold');
+    if (bl) {
+      add('blowoutW', 'Biggest blowout win', 'by ' + n2(bl.margin), bl.winner, wk(bl), 'hot');
+      add('blowoutL', 'Biggest blowout loss', 'by ' + n2(bl.margin), bl.loser, wk(bl), 'cold');
+    }
+    if (nb) add('closest', 'Closest win ever', 'by ' + n2(nb.margin), nb.winner, wk(nb), 'hot');
+    if (sh) add('shootout', 'Highest-scoring game', n2(sh.total) + ' combined',
+      [sh.winner, sh.loser], wk(sh));
+    if (ml) add('mostLoss', 'Most points in a loss', n2(ml.pts), ml.ownerId, wk(ml), 'cold');
+    if (fw) add('fewWin', 'Fewest points in a win', n2(fw.pts), fw.ownerId, wk(fw));
+    if (bpf) add('seasonPF', 'Most points in a season', n2(bpf.pf), bpf.ownerId,
+      bpf.season + ' regular season', 'hot');
+    if (brec) add('seasonRec', 'Best regular season',
+      `${brec.wins}-${brec.losses}${brec.ties ? '-' + brec.ties : ''}`, brec.ownerId,
+      brec.season + (brec.champion ? ' · won the title too' : ''), 'hot');
+    if (longestWinStreak) add('winStreak', 'Longest win streak',
+      longestWinStreak.n + ' games', longestWinStreak.id,
+      `through ${longestWinStreak.end.season} Week ${longestWinStreak.end.week}`, 'hot');
+    if (longestLossStreak) add('lossStreak', 'Longest losing streak',
+      longestLossStreak.n + ' games', longestLossStreak.id,
+      `through ${longestLossStreak.end.season} Week ${longestLossStreak.end.week}`, 'cold');
+
+    /* career maxima — ties share the record */
+    const maxOwners = fn => {
+      const mx = Math.max.apply(null, managerList.map(fn));
+      return { mx, owners: managerList.filter(m => fn(m) === mx).map(m => m.id) };
+    };
+    const cr = maxOwners(m => m.crowns);
+    if (cr.mx > 0) add('crowns', 'Most weekly crowns', cr.mx + ' crowns', cr.owners,
+      'highest score of the week, all-time', 'hot');
+    const ti = maxOwners(m => m.titles.length);
+    if (ti.mx > 0) add('titles', 'Most championships', ti.mx + (ti.mx === 1 ? ' title' : ' titles'),
+      ti.owners, '', 'hot');
+    const q = managerList.filter(m => m.qualified);
+    if (q.length) {
+      const bp = Math.max.apply(null, q.map(m => m.winPct));
+      add('winPct', 'Best career win %', pct(bp),
+        q.filter(m => m.winPct === bp).map(m => m.id), `${MIN_SEASONS}+ seasons`, 'hot');
+      const bg = Math.max.apply(null, q.map(m => m.ppg));
+      add('ppg', 'Highest career PPG', n1(bg),
+        q.filter(m => m.ppg === bg).map(m => m.id), `${MIN_SEASONS}+ seasons`, 'hot');
+    }
+    const cp = maxOwners(m => m.pf);
+    if (cp.mx > 0) add('careerPF', 'Most career points',
+      Math.round(cp.mx).toLocaleString(), cp.owners, 'all-time scoring leader', 'hot');
+    return list;
+  })();
+
   /* ---------------- money ---------------------------------------------- */
   const money = computeMoney(seasons, managers, crownList);
   managerList.forEach(m => {
@@ -249,7 +321,7 @@ function buildModel(raw) {
     completedSeasons: seasons.filter(s => s.complete),
     liveSeason: seasons.find(s => s.inProgress) || null,
     currentSeason: seasons[seasons.length - 1],
-    managers, managerList, h2h, weekly, gameLog, records, seasonRows,
+    managers, managerList, h2h, weekly, gameLog, records, seasonRows, recordHolders,
     qualifiedList: managerList.filter(m => m.qualified),
     minSeasons: MIN_SEASONS,
     regressGames: REGRESS,
