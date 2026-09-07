@@ -477,7 +477,15 @@ async function loadProjections(season, week) {
       `${CONFIG.projApi}/projections/nfl/${season}/${week}?season_type=regular&${qs}&order_by=ppr`);
     if (res.ok) raw = await res.json();
   } catch (_) { /* projections are a bonus, never fatal */ }
-  if (!Array.isArray(raw)) return {};
+  if (!Array.isArray(raw)) {
+    // Ad/privacy blockers sometimes eat this request (it is not under /v1 and
+    // looks like a tracking endpoint). Say so — silently dropping the win bar
+    // looks like a bug in the site.
+    console.warn('[projections] could not load week ' + week + ' — win probability ' +
+      'and roster projections will be hidden. An ad blocker may be blocking ' +
+      CONFIG.projApi + '/projections/…');
+    return {};
+  }
 
   const map = {};
   raw.forEach(x => {
@@ -555,8 +563,31 @@ function readCache() {
     const hit = JSON.parse(localStorage.getItem(CONFIG.cacheKey) || 'null');
     if (!hit || !hit.fetchedAt) return null;
     if (Date.now() - hit.fetchedAt > CONFIG.cacheHours * 3600e3) return null;
+    // Age is not enough. A cache written by an older build can be perfectly
+    // fresh and still be missing fields this build needs, which fails silently
+    // as empty tables rather than as an error. Check the shape too — refetching
+    // costs a few seconds, rendering a half-empty page costs trust.
+    if (!cacheShapeOK(hit)) {
+      console.warn('[cache] shape is from an older build — refetching');
+      return null;
+    }
     return hit;
   } catch (_) { return null; }
+}
+
+/** Does this cached payload carry everything the current build reads? */
+function cacheShapeOK(hit) {
+  const seasons = hit.seasons;
+  if (!Array.isArray(seasons) || !seasons.length) return false;
+  return seasons.every(s => {
+    if (!s || !Array.isArray(s.teams)) return false;
+    // roster arrays power the manager profile's roster panel
+    if (s.teams.some(t => !Array.isArray(t.players) || !Array.isArray(t.starters))) return false;
+    if (!s.pairings || typeof s.pairings !== 'object') return false;
+    // a live season also needs per-week lineups for win probability
+    if (s.inProgress && (!s.lineups || typeof s.lineups !== 'object')) return false;
+    return true;
+  });
 }
 
 function writeCache(raw) {
