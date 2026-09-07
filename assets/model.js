@@ -338,7 +338,7 @@ function buildModel(raw) {
   return {
     fetchedAt: raw.fetchedAt,
     leagueName: raw.leagueName,
-    seasons, money, nflState, currentWeek,
+    seasons, money, nflState, currentWeek, scoreSD, meanPts,
     completedSeasons: seasons.filter(s => s.complete),
     liveSeason,
     currentSeason: seasons[seasons.length - 1],
@@ -456,6 +456,69 @@ function computeMoney(seasons, managers, crownList) {
       .reduce((a, s) => a + s.collected, 0),
     unbalanced: seasonRows.filter(s => !s.balanced)
   };
+}
+
+/* ------------------------------------------------------------------
+   Win probability
+
+   A matchup is modelled as a normal distribution around each side's
+   expected final score. Starters who have already played contribute
+   their real points and no uncertainty; everyone still to play
+   contributes their projection and their share of the variance. So the
+   number starts near a coin flip on Tuesday and hardens into a result
+   as Sunday plays out.
+   ------------------------------------------------------------------ */
+
+/** Normal CDF — Abramowitz & Stegun 7.1.26, plenty accurate here. */
+function normCdf(z) {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
+    a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return 0.5 * (1 + sign * y);
+}
+
+/**
+ * Expected final score for one side of a matchup.
+ * @param {string[]} starters      roster's starting player ids
+ * @param {number[]} startersPoints points already scored, parallel to starters
+ * @param {object}   proj          player id -> projection record
+ * @param {number}   sd            league-wide weekly scoring SD
+ * @param {string}   today         YYYY-MM-DD, local
+ */
+function projectSide(starters, startersPoints, proj, sd, today) {
+  let expected = 0, remaining = 0, totalProj = 0, played = 0, live = 0;
+  (starters || []).forEach((pid, i) => {
+    if (!pid || pid === '0') return;                 // empty lineup slot
+    const info = proj ? proj[pid] : null;
+    const p = info && info.proj != null ? info.proj : 0;
+    const actual = Number((startersPoints || [])[i]) || 0;
+    totalProj += p;
+    // Someone whose game day has passed is finished even if he scored nothing;
+    // otherwise any points on the board mean he has started.
+    const isDone = actual > 0 || (info && info.date && info.date < today);
+    if (isDone) { expected += actual; played++; }
+    else { expected += p; remaining += p; live++; }
+  });
+  // Variance scales with how much of the lineup is still to come.
+  const frac = totalProj > 0 ? Math.min(1, remaining / totalProj) : (played ? 0 : 1);
+  return {
+    expected, remaining, played, live,
+    sd: sd * Math.sqrt(frac),
+    hasProjection: totalProj > 0
+  };
+}
+
+/** Probability that side A finishes ahead of side B. */
+function winProbability(a, b) {
+  const sd = Math.sqrt(a.sd * a.sd + b.sd * b.sd);
+  if (sd < 0.5) {                                     // nothing left to play
+    if (a.expected === b.expected) return 0.5;
+    return a.expected > b.expected ? 1 : 0;
+  }
+  return normCdf((a.expected - b.expected) / sd);
 }
 
 /* ------------------------------------------------------------------

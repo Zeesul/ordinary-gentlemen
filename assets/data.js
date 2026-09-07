@@ -9,6 +9,9 @@ const CONFIG = {
   cacheKey: 'log_site_data_v7',
   playerKey: 'log_players_v1',
   txnKey: 'log_txn_v1_',
+  projKey: 'log_proj_v1_',
+  projApi: 'https://api.sleeper.app',
+  projCacheMins: 60,
   cacheHours: 3,
   playerCacheDays: 7,
   concurrency: 6
@@ -54,6 +57,14 @@ const fmtDate = ms => {
   const d = new Date(ms);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
+
+/** Today in the local timezone, formatted the way Sleeper dates its games. */
+function todayISO() {
+  const d = new Date();
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
 
 /** Run an async fn over items with limited concurrency. */
 async function pool(items, limit, fn) {
@@ -160,7 +171,11 @@ async function loadSeason(lg) {
       pf: (s.fpts || 0) + (s.fpts_decimal || 0) / 100,
       pa: (s.fpts_against || 0) + (s.fpts_against_decimal || 0) / 100,
       moves: s.total_moves || 0,
-      waiverUsed: s.waiver_budget_used || 0
+      waiverUsed: s.waiver_budget_used || 0,
+      players: r.players || [],
+      starters: r.starters || [],
+      reserve: r.reserve || [],
+      taxi: r.taxi || []
     };
   });
 
@@ -171,6 +186,11 @@ async function loadSeason(lg) {
   // ahead. `games` stays results-only: the record book and head-to-head
   // must never see a matchup that hasn't happened.
   const pairings = {};   // { week: [{ week, a, ap, b, bp, played }] }
+  // Per-week lineups, kept only while a season is live — that's the only time
+  // anything asks who is actually starting. Finished seasons skip it so the
+  // cached payload doesn't carry five years of dead lineup data.
+  const lineups = {};    // { week: { rosterId: { starters, startersPoints, points } } }
+  const keepLineups = lg.status !== 'complete';
   if (started && lastLeg >= 1) {
     const weeks = range(1, lastLeg);
     const results = await pool(weeks, CONFIG.concurrency, async w => {
@@ -206,6 +226,18 @@ async function loadSeason(lg) {
         }
       });
       if (wkPairs.length) pairings[week] = wkPairs;
+
+      if (keepLineups) {
+        const byRoster = {};
+        data.forEach(m => {
+          byRoster[m.roster_id] = {
+            starters: m.starters || [],
+            startersPoints: m.starters_points || [],
+            points: m.points || 0
+          };
+        });
+        lineups[week] = byRoster;
+      }
     });
   } else {
     boot.tick(Math.max(lastLeg, 0));
@@ -329,9 +361,10 @@ async function loadSeason(lg) {
     draftStatus: d0 ? d0.status : null,
     playoffStart,
     playoffsUnderway,
+    rosterPositions: Array.isArray(lg.roster_positions) ? lg.roster_positions : [],
     playoffTeams: st.playoff_teams || 6,
     lastLeg,
-    teams, games, scores, pairings, draft,
+    teams, games, scores, pairings, lineups, draft,
     winnersBracket: Array.isArray(wb) ? wb : [],
     losersBracket: Array.isArray(lb) ? lb : [],
     championRoster,
@@ -407,6 +440,71 @@ function playerName(id) {
 function playerMeta(id) {
   const p = PLAYERS && PLAYERS[id];
   return p ? { name: p[0], pos: p[1], team: p[2] } : { name: String(id), pos: '', team: '' };
+}
+
+/* ------------------------------------------------------------------
+   Weekly projections.
+
+   Sleeper's projections feed is undocumented but public, and it carries
+   far more than points: every record has the player's name, position,
+   NFL team and injury status. That makes it a complete lookup for
+   anything currently rostered or traded, so the roster and transaction
+   panels never have to pull the ~10MB /players/nfl dictionary.
+
+   The response is ~2MB, so it is trimmed to the fields the site uses
+   before being cached, and refetched hourly while a week is live.
+   ------------------------------------------------------------------ */
+const PROJ_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+const PROJ_MEMO = {};
+
+async function loadProjections(season, week) {
+  const memoKey = season + '|' + week;
+  if (PROJ_MEMO[memoKey]) return PROJ_MEMO[memoKey];
+
+  const key = CONFIG.projKey + season + '_' + week;
+  try {
+    const hit = JSON.parse(localStorage.getItem(key) || 'null');
+    if (hit && hit.ts && hit.p && Date.now() - hit.ts < CONFIG.projCacheMins * 60000) {
+      PROJ_MEMO[memoKey] = hit.p;
+      return hit.p;
+    }
+  } catch (_) { /* ignore */ }
+
+  const qs = PROJ_POSITIONS.map(p => 'position[]=' + p).join('&');
+  let raw = null;
+  try {
+    const res = await fetch(
+      `${CONFIG.projApi}/projections/nfl/${season}/${week}?season_type=regular&${qs}&order_by=ppr`);
+    if (res.ok) raw = await res.json();
+  } catch (_) { /* projections are a bonus, never fatal */ }
+  if (!Array.isArray(raw)) return {};
+
+  const map = {};
+  raw.forEach(x => {
+    const p = x.player || {};
+    const pts = x.stats && x.stats.pts_ppr != null ? x.stats.pts_ppr : null;
+    map[x.player_id] = {
+      name: [p.first_name, p.last_name].filter(Boolean).join(' ') || String(x.player_id),
+      pos: p.position || '',
+      team: x.team || p.team || '',
+      inj: p.injury_status || '',
+      proj: pts,
+      date: x.date || ''
+    };
+  });
+  PROJ_MEMO[memoKey] = map;
+  try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), p: map })); }
+  catch (_) { /* over quota — the in-memory copy still serves this visit */ }
+  return map;
+}
+
+/** Name/position/team for a player id, from whichever lookup we have. */
+function projMeta(proj, pid) {
+  const i = proj && proj[pid];
+  if (i) return i;
+  const m = typeof playerMeta === 'function' ? playerMeta(pid) : null;
+  return m ? { name: m.name, pos: m.pos, team: m.team, inj: '', proj: null, date: '' }
+    : { name: String(pid), pos: '', team: '', inj: '', proj: null, date: '' };
 }
 
 /* ------------------------------------------------------------------

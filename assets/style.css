@@ -255,7 +255,9 @@ td.none{color:#3b4757}
   font-family:"Barlow Condensed",Inter,sans-serif;font-size:23px;font-weight:700;
   line-height:1;font-variant-numeric:tabular-nums;flex:none;
 }
-.mu-rec{color:var(--ink-2);font-size:13px;font-variant-numeric:tabular-nums;flex:none}
+.mu-rec{color:var(--ink-2);font-size:13px;font-variant-numeric:tabular-nums}
+.mu-val{flex:none;text-align:right}
+.mu-proj{color:var(--ink-3);font-size:10.5px;letter-spacing:.4px;margin-top:2px;font-variant-numeric:tabular-nums}
 .mu-side.won{background:rgba(53,196,138,.08)}
 .mu-side.won .mu-pts{color:var(--green)}
 .mu-side.lost .mu-name,.mu-side.lost .mu-team,.mu-side.lost .mu-pts{color:var(--ink-3)}
@@ -266,6 +268,44 @@ td.none{color:#3b4757}
   color:var(--ink-3);font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;font-weight:700;
 }
 .mu-split::before,.mu-split::after{content:"";flex:1;height:1px;background:var(--line-soft)}
+
+/* Win bar. Two numbers with the split filled between them — the leader's
+   share reads at a glance without having to compare digits. */
+.mu-odds{
+  display:flex;align-items:center;gap:9px;padding:9px 14px;
+  background:var(--panel-2);border-top:1px solid var(--line);
+}
+.mu-odds-n{
+  font-size:11.5px;font-weight:700;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;min-width:34px;
+}
+.mu-odds-n:last-child{text-align:right}
+.mu-odds-n.lead{color:var(--ink)}
+.mu-odds-bar{
+  flex:1;height:5px;border-radius:3px;overflow:hidden;
+  background:linear-gradient(90deg,var(--line) 0%,var(--line) 100%);
+}
+.mu-odds-fill{height:100%;background:var(--gold);border-radius:3px;transition:width .3s ease}
+.mu-odds.settled .mu-odds-fill{background:var(--green)}
+.mu-odds.settled .mu-odds-n.lead{color:var(--green)}
+
+/* ------------------------------ roster + moves ---------------- */
+table.roster td.slot{
+  color:var(--ink-3);font-size:10px;letter-spacing:1.3px;text-transform:uppercase;
+  font-weight:700;width:54px;
+}
+tr.rgroup td{
+  background:var(--panel-2);color:var(--ink-3);font-size:10px;letter-spacing:1.6px;
+  text-transform:uppercase;font-weight:700;padding:7px 12px;
+}
+tbody tr.rgroup:hover td{background:var(--panel-2)}
+.pcell .pill{margin-left:6px;vertical-align:middle}
+.mv-in,.mv-out{font-size:13.5px;line-height:1.5}
+.mv-in{color:var(--green)}
+.mv-out{color:var(--red)}
+.mv-in::before{content:"+ ";font-weight:700}
+.mv-out::before{content:"\2212 ";font-weight:700}
+.mv-in .muted,.mv-out .muted{color:var(--ink-3)}
 
 /* ------------------------------ trophy room ------------------- */
 .trophy{

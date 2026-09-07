@@ -84,7 +84,7 @@ function medal(row) {
 const views = {};
 
 /* ============================== HOME ============================== */
-views.home = () => {
+views.home = async () => {
   const last = MODEL.completedSeasons[MODEL.completedSeasons.length - 1];
   const champTeam = last && last.byRoster[last.championRoster];
   const champ = champTeam ? mgr(champTeam.ownerId) : null;
@@ -122,17 +122,32 @@ views.home = () => {
 
   // --- this week's matchups ------------------------------------------
   /* Built from `pairings`, not `games`, so the card is there before kickoff.
-     Scores replace records the moment a matchup has points on the board. */
+     Scores replace records the moment a matchup has points on the board, and
+     the win bar hardens from a coin flip into a result as the week plays out. */
   let weekBlock = '';
   if (live && MODEL.currentWeek) {
     const wk = MODEL.currentWeek;
     const pairs = (live.pairings && live.pairings[wk]) || [];
     const anyPlayed = pairs.some(p => p.played);
+    const proj = pairs.length ? await loadProjections(live.season, wk) : {};
+    const lineups = (live.lineups && live.lineups[wk]) || {};
+    const today = todayISO();
+
+    const sideFor = rid => {
+      const lu = lineups[rid] || {};
+      return projectSide(lu.starters, lu.startersPoints, proj, MODEL.scoreSD, today);
+    };
 
     const cards = pairs.map(p => {
       const ta = live.byRoster[p.a], tb = live.byRoster[p.b];
       if (!ta || !tb) return '';
-      const side = (t, pts, won, lost) => `
+      const sa = sideFor(p.a), sb = sideFor(p.b);
+      // No projections (feed down, or an odd week) means no odds — the rest
+      // of the card still works.
+      const showOdds = sa.hasProjection && sb.hasProjection;
+      const settled = showOdds && sa.sd + sb.sd < 0.5;
+
+      const side = (t, pts, sd, won, lost) => `
         <div class="mu-side ${won ? 'won' : ''} ${lost ? 'lost' : ''}">
           <img src="${esc(mgr(t.ownerId).avatar)}" alt="" loading="lazy"
             onerror="this.style.visibility='hidden'">
@@ -140,14 +155,30 @@ views.home = () => {
             <div class="mu-name">${mgrLink(t.ownerId)}</div>
             <div class="mu-team">${esc(t.teamName)}</div>
           </div>
-          ${p.played ? `<div class="mu-pts">${n2(pts)}</div>`
-            : `<div class="mu-rec">${wl(t)}</div>`}
+          <div class="mu-val">
+            ${p.played ? `<div class="mu-pts">${n2(pts)}</div>`
+              : `<div class="mu-rec">${wl(t)}</div>`}
+            ${showOdds && !settled ? `<div class="mu-proj">proj ${n1(sd.expected)}</div>` : ''}
+          </div>
         </div>`;
       const aw = p.played && p.ap > p.bp, bw = p.played && p.bp > p.ap;
+
+      let odds = '';
+      if (showOdds) {
+        const pa = Math.round(winProbability(sa, sb) * 100);
+        const pb = 100 - pa;
+        odds = `<div class="mu-odds ${settled ? 'settled' : ''}">
+          <span class="mu-odds-n ${pa >= pb ? 'lead' : ''}">${pa}%</span>
+          <div class="mu-odds-bar"><div class="mu-odds-fill" style="width:${pa}%"></div></div>
+          <span class="mu-odds-n ${pb > pa ? 'lead' : ''}">${pb}%</span>
+        </div>`;
+      }
+
       return `<div class="mu">
-        ${side(ta, p.ap, aw, bw)}
+        ${side(ta, p.ap, sa, aw, bw)}
         <div class="mu-split"><span>vs</span></div>
-        ${side(tb, p.bp, bw, aw)}
+        ${side(tb, p.bp, sb, bw, aw)}
+        ${odds}
       </div>`;
     }).join('');
 
@@ -156,8 +187,11 @@ views.home = () => {
       <h3 class="section-title">Week ${wk} Matchups</h3>
       <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
         ${anyPlayed
-          ? 'Scores refresh every time you load the page.'
-          : 'Records shown until kickoff &mdash; scores land here once the games start.'}</p>
+          ? 'Scores and odds refresh every time you load the page.'
+          : 'Records shown until kickoff &mdash; scores land here once the games start.'}
+        Win chance comes from Sleeper&rsquo;s projections for whoever is left to play,
+        spread by how swingy this league actually is
+        (&plusmn;${n1(MODEL.scoreSD)} points a week across ${MODEL.totals.games.toLocaleString()} games).</p>
       <div class="grid g3 matchups">${cards}</div>`;
     }
   }
@@ -885,7 +919,7 @@ views.managers = params => {
 };
 
 /* ========================= MANAGER PROFILE ========================= */
-views.manager = params => {
+views.manager = async params => {
   const m = MODEL.managers[params.id];
   if (!m) return `<div class="empty">Manager not found. <a href="#/managers">Back to the list</a></div>`;
 
@@ -964,6 +998,117 @@ views.manager = params => {
       <td>${picks.map(p => `${esc(p.player)} <span class="muted small">(${esc(p.position)})</span>`).join(' &middot; ')}</td></tr>`;
   }).filter(Boolean).reverse();
 
+  /* ---- current roster + this season's moves -------------------------
+     Both only exist while a season is live. The projections feed doubles as
+     the player lookup, so neither needs the big /players/nfl dictionary. */
+  let rosterBlock = '', movesBlock = '';
+  const liveS = MODEL.liveSeason;
+  const myTeam = liveS ? liveS.teams.find(t => t.ownerId === m.id) : null;
+  if (myTeam) {
+    const wk = MODEL.currentWeek || 1;
+    const [proj, txns] = await Promise.all([
+      loadProjections(liveS.season, wk),
+      loadTransactions(liveS).catch(() => [])
+    ]);
+
+    const lu = (liveS.lineups && liveS.lineups[wk] &&
+      liveS.lineups[wk][myTeam.rosterId]) || {};
+    const ptsByPlayer = {};
+    (lu.starters || []).forEach((pid, i) => {
+      ptsByPlayer[pid] = Number((lu.startersPoints || [])[i]) || 0;
+    });
+
+    const starters = (lu.starters && lu.starters.length) ? lu.starters : (myTeam.starters || []);
+    const reserve = myTeam.reserve || [], taxi = myTeam.taxi || [];
+    const claimed = new Set([].concat(starters, reserve, taxi).filter(Boolean));
+    const bench = (myTeam.players || []).filter(pid => pid && !claimed.has(pid));
+    // roster_positions lists every slot including BN; the starters array is in
+    // that same order minus the bench, so the non-BN slots label it directly.
+    const slotNames = (liveS.rosterPositions || []).filter(x => x !== 'BN' && x !== 'TAXI');
+
+    const pRow = (pid, slot) => {
+      const i = projMeta(proj, pid);
+      const pts = ptsByPlayer[pid];
+      return `<tr>
+        <td class="slot">${esc(slot || '')}</td>
+        <td><div class="pcell">${playerFace(pid)}
+          <span><strong>${esc(i.name)}</strong>${i.inj
+            ? ` <span class="pill ${/^(Out|IR|Doubtful|PUP|Sus)/i.test(i.inj)
+              ? 'pill-red' : 'pill-dim'}">${esc(i.inj)}</span>` : ''}
+          <span class="muted small">${esc([i.pos, i.team].filter(Boolean).join(' · '))}</span></span>
+        </div></td>
+        <td class="num muted">${i.proj != null ? n1(i.proj) : '&mdash;'}</td>
+        <td class="num">${pts ? `<strong>${n2(pts)}</strong>`
+          : '<span class="muted">&mdash;</span>'}</td>
+      </tr>`;
+    };
+
+    const group = (label, ids, slots) => {
+      if (!ids.length) return '';
+      const rows = ids.map((pid, i) => pRow(pid, slots ? slots[i] : label));
+      return rows.join('');
+    };
+
+    const startRows = starters.filter(Boolean).map((pid, i) => pRow(pid, slotNames[i] || ''));
+    const benchRows = group('BN', bench);
+    const irRows = group('IR', reserve.filter(Boolean));
+    const taxiRows = group('TAXI', taxi.filter(Boolean));
+
+    const projTotal = starters.filter(Boolean)
+      .reduce((a, pid) => a + ((proj[pid] && proj[pid].proj) || 0), 0);
+
+    const head = ['Slot', 'Player', { label: 'Proj', num: 1 }, { label: 'Points', num: 1 }];
+    const sep = txt => `<tr class="rgroup"><td colspan="4">${txt}</td></tr>`;
+    const rosterSections = [startRows.join('')];
+    if (benchRows) rosterSections.push(sep('Bench'), benchRows);
+    if (irRows) rosterSections.push(sep('Injured reserve'), irRows);
+    if (taxiRows) rosterSections.push(sep('Taxi squad'), taxiRows);
+    rosterBlock = `
+      <h3 class="section-title">Current Roster</h3>
+      <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
+        ${esc(liveS.season)} season, week ${wk}${projTotal
+          ? ` &middot; starters projected <strong>${n1(projTotal)}</strong>` : ''}.
+        Points fill in as games are played.</p>
+      ${table(head, rosterSections, 'roster')}`;
+
+    /* ---- every move this season ---- */
+    const mine = txns.filter(t => (t.rosters || []).indexOf(myTeam.rosterId) !== -1);
+    const who = rid => {
+      const t = liveS.byRoster[rid];
+      return t ? esc(mgr(t.ownerId).name) : 'Roster ' + rid;
+    };
+    const plabel = pid => {
+      const i = projMeta(proj, pid);
+      return `${esc(i.name)}<span class="muted small"> ${esc([i.pos, i.team]
+        .filter(Boolean).join(' · '))}</span>`;
+    };
+    const moveRows = mine.map(t => {
+      const got = Object.keys(t.adds || {}).filter(pid => t.adds[pid] === myTeam.rosterId);
+      const lost = Object.keys(t.drops || {}).filter(pid => t.drops[pid] === myTeam.rosterId);
+      const partners = (t.rosters || []).filter(r => r !== myTeam.rosterId).map(who);
+      const kind = t.type === 'trade' ? ['Trade', 'pill-gold']
+        : t.type === 'waiver' ? ['Waiver', 'pill-teal'] : ['Free agent', 'pill-dim'];
+      return `<tr>
+        <td class="muted small" style="white-space:nowrap">Wk ${t.week}<br>${esc(fmtDate(t.created))}</td>
+        <td style="white-space:nowrap"><span class="pill ${kind[1]}">${kind[0]}</span>
+          ${t.bid ? `<div class="gold-text small" style="margin-top:4px">$${t.bid}</div>` : ''}</td>
+        <td>
+          ${got.length ? `<div class="mv-in">${got.map(plabel).join('<br>')}</div>` : ''}
+          ${lost.length ? `<div class="mv-out">${lost.map(plabel).join('<br>')}</div>` : ''}
+          ${t.type === 'trade' && partners.length
+            ? `<div class="muted small" style="margin-top:4px">with ${partners.join(', ')}</div>` : ''}
+        </td>
+      </tr>`;
+    });
+
+    movesBlock = `
+      <h3 class="section-title">Moves This Season</h3>
+      <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
+        Every trade, waiver claim and free-agent pickup in ${esc(liveS.season)}
+        &mdash; ${mine.length} so far. Green is in, red is out.</p>
+      ${table(['When', 'Type', 'Players'], moveRows)}`;
+  }
+
   return `
   <div class="profile-head">
     <img src="${esc(m.avatar)}" alt="" onerror="this.style.visibility='hidden'">
@@ -998,6 +1143,8 @@ views.manager = params => {
         <span style="color:${m.net > 0 ? 'var(--green)' : m.net < 0 ? 'var(--red)' : 'inherit'}">
         ${m.net > 0 ? '+' : ''}${money0(m.net || 0)} net</span></div></div>
   </div>
+
+  ${rosterBlock}
 
   <h3 class="section-title">Record Showcase</h3>
   ${holds.length ? `
@@ -1054,6 +1201,8 @@ views.manager = params => {
           ${row.net > 0 ? '+' : ''}${money0(row.net)}</strong> lifetime.
           <a href="#/money">Full ledger &rarr;</a></p>`;
     })()}
+
+  ${movesBlock}
 
   ${drafted.length ? `<h3 class="section-title">Early-Round Draft Picks</h3>
     ${table(['Season', 'Rounds 1-3'], drafted)}` : ''}
