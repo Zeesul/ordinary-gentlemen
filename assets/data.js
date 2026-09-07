@@ -223,11 +223,19 @@ async function loadSeason(lg) {
     championRoster = Number(lg.metadata.latest_league_winner_roster_id);
   }
 
+  // Sleeper seeds next season's bracket the moment the league rolls over, so a
+  // team that has played no games can already appear in a "playoff" matchup.
+  // The bracket only means something once the season has reached playoff weeks.
+  const playoffsUnderway = lg.status === 'complete' ||
+    (st.last_scored_leg || 0) >= playoffStart;
+
   const playoffRosters = new Set();
-  (Array.isArray(wb) ? wb : []).forEach(m => {
-    if (typeof m.t1 === 'number') playoffRosters.add(m.t1);
-    if (typeof m.t2 === 'number') playoffRosters.add(m.t2);
-  });
+  if (playoffsUnderway) {
+    (Array.isArray(wb) ? wb : []).forEach(m => {
+      if (typeof m.t1 === 'number') playoffRosters.add(m.t1);
+      if (typeof m.t2 === 'number') playoffRosters.add(m.t2);
+    });
+  }
 
   // ---- draft ---------------------------------------------------------
   let draft = null;
@@ -313,6 +321,7 @@ async function loadSeason(lg) {
     draftId: d0 ? d0.draft_id : null,
     draftStatus: d0 ? d0.status : null,
     playoffStart,
+    playoffsUnderway,
     playoffTeams: st.playoff_teams || 6,
     lastLeg,
     teams, games, scores, draft,
