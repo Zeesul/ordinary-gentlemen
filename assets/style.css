@@ -233,6 +233,40 @@ td.neg{background:rgba(229,97,95,.13)}
 td.evn{background:rgba(140,160,185,.08)}
 td.none{color:#3b4757}
 
+/* ------------------------------ weekly matchups --------------- */
+.matchups{align-items:start}
+.mu{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;transition:border-color .15s;
+}
+.mu:hover{border-color:#33415a}
+.mu-side{display:flex;align-items:center;gap:11px;padding:12px 14px;min-width:0}
+.mu-side img{
+  width:34px;height:34px;border-radius:50%;object-fit:cover;
+  background:var(--panel-2);flex:none;
+}
+.mu-who{min-width:0;flex:1}
+.mu-name{font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mu-team{
+  color:var(--ink-3);font-size:11.5px;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.mu-pts{
+  font-family:"Barlow Condensed",Inter,sans-serif;font-size:23px;font-weight:700;
+  line-height:1;font-variant-numeric:tabular-nums;flex:none;
+}
+.mu-rec{color:var(--ink-2);font-size:13px;font-variant-numeric:tabular-nums;flex:none}
+.mu-side.won{background:rgba(53,196,138,.08)}
+.mu-side.won .mu-pts{color:var(--green)}
+.mu-side.lost .mu-name,.mu-side.lost .mu-team,.mu-side.lost .mu-pts{color:var(--ink-3)}
+
+/* Hairline with a centred "vs" — a plain border reads as two unrelated rows. */
+.mu-split{
+  display:flex;align-items:center;gap:10px;padding:0 14px;
+  color:var(--ink-3);font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;font-weight:700;
+}
+.mu-split::before,.mu-split::after{content:"";flex:1;height:1px;background:var(--line-soft)}
+
 /* ------------------------------ trophy room ------------------- */
 .trophy{
   background:linear-gradient(160deg,rgba(212,175,55,.10),var(--panel) 55%);

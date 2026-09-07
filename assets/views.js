@@ -120,20 +120,65 @@ views.home = () => {
     </tr>`;
   });
 
+  // --- this week's matchups ------------------------------------------
+  /* Built from `pairings`, not `games`, so the card is there before kickoff.
+     Scores replace records the moment a matchup has points on the board. */
+  let weekBlock = '';
+  if (live && MODEL.currentWeek) {
+    const wk = MODEL.currentWeek;
+    const pairs = (live.pairings && live.pairings[wk]) || [];
+    const anyPlayed = pairs.some(p => p.played);
+
+    const cards = pairs.map(p => {
+      const ta = live.byRoster[p.a], tb = live.byRoster[p.b];
+      if (!ta || !tb) return '';
+      const side = (t, pts, won, lost) => `
+        <div class="mu-side ${won ? 'won' : ''} ${lost ? 'lost' : ''}">
+          <img src="${esc(mgr(t.ownerId).avatar)}" alt="" loading="lazy"
+            onerror="this.style.visibility='hidden'">
+          <div class="mu-who">
+            <div class="mu-name">${mgrLink(t.ownerId)}</div>
+            <div class="mu-team">${esc(t.teamName)}</div>
+          </div>
+          ${p.played ? `<div class="mu-pts">${n2(pts)}</div>`
+            : `<div class="mu-rec">${wl(t)}</div>`}
+        </div>`;
+      const aw = p.played && p.ap > p.bp, bw = p.played && p.bp > p.ap;
+      return `<div class="mu">
+        ${side(ta, p.ap, aw, bw)}
+        <div class="mu-split"><span>vs</span></div>
+        ${side(tb, p.bp, bw, aw)}
+      </div>`;
+    }).join('');
+
+    if (cards) {
+      weekBlock = `
+      <h3 class="section-title">Week ${wk} Matchups</h3>
+      <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
+        ${anyPlayed
+          ? 'Scores refresh every time you load the page.'
+          : 'Records shown until kickoff &mdash; scores land here once the games start.'}</p>
+      <div class="grid g3 matchups">${cards}</div>`;
+    }
+  }
+
   // --- live season block -------------------------------------------
   let liveBlock = '';
   if (live) {
     const weeksPlayed = Array.from(new Set(live.games.map(g => g.week)));
-    const curWeek = weeksPlayed.length ? Math.max.apply(null, weeksPlayed) : 0;
+    // The most recent week with actual results — not necessarily this week.
+    const lastPlayed = weeksPlayed.length ? Math.max.apply(null, weeksPlayed) : 0;
     const bubble = live.standings.slice(0, live.playoffTeams + 2).map((t, i) => `
       <tr class="${i === live.playoffTeams - 1 ? 'playoff-line' : ''}">
         <td class="rank">${t.seed}</td>
         <td>${mgrCell(t.ownerId, t.teamName)}</td>
         <td class="num">${wl(t)}</td>
         <td class="num">${n2(t.pf)}</td>
-        <td>${t.seed <= live.playoffTeams ? '<span class="pill pill-dim">In</span>' : '<span class="muted small">Bubble</span>'}</td>
+        <td>${!lastPlayed ? '<span class="muted">&mdash;</span>'
+          : t.seed <= live.playoffTeams ? '<span class="pill pill-dim">In</span>'
+          : '<span class="muted small">Bubble</span>'}</td>
       </tr>`);
-    const lastWeek = live.games.filter(g => g.week === curWeek).map(g => {
+    const lastWeek = lastPlayed ? live.games.filter(g => g.week === lastPlayed).map(g => {
       const ta = live.byRoster[g.a], tb = live.byRoster[g.b];
       if (!ta || !tb) return '';
       const aw = g.ap > g.bp;
@@ -144,20 +189,25 @@ views.home = () => {
         <td class="num ${!aw ? 'win' : ''}">${n2(g.bp)}</td>
         <td class="${!aw ? 'win' : 'muted'}">${mgrLink(tb.ownerId)}</td>
       </tr>`;
-    }).join('');
+    }).join('') : '';
+
+    // Before the first kickoff there are no results to show, so the standings
+    // take the full width instead of sitting next to an empty panel.
+    const resultsPanel = lastWeek ? `
+        <div>
+          <div class="small muted" style="margin-bottom:8px">Week ${lastPlayed} results</div>
+          <div class="table-wrap"><table>${lastWeek}</table></div>
+        </div>` : '';
 
     liveBlock = `
       <h3 class="section-title">${esc(live.season)} Season &mdash; In Progress</h3>
-      <div class="grid g2">
+      <div class="grid ${resultsPanel ? 'g2' : ''}">
         <div>
-          <div class="small muted" style="margin-bottom:8px">Playoff picture (top ${live.playoffTeams} make it)</div>
+          <div class="small muted" style="margin-bottom:8px">${lastPlayed
+            ? `Playoff picture (top ${live.playoffTeams} make it)`
+            : 'Standings &mdash; nobody has played a game yet'}</div>
           ${table(['#', 'Manager', { label: 'Record', num: 1 }, { label: 'PF', num: 1 }, ''], bubble)}
-        </div>
-        <div>
-          <div class="small muted" style="margin-bottom:8px">Week ${curWeek} results</div>
-          <div class="table-wrap"><table>${lastWeek ||
-        '<tr><td class="muted" style="padding:20px">No games played yet.</td></tr>'}</table></div>
-        </div>
+        </div>${resultsPanel}
       </div>`;
   }
 
@@ -220,6 +270,8 @@ views.home = () => {
       <div class="stat-meta">${topScore ? esc(mgr(topScore.ownerId).name) + ' &middot; ' + topScore.season + ' Wk ' + topScore.week : ''}</div>
     </div>
   </div>
+
+  ${weekBlock}
 
   ${liveBlock}
 

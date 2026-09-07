@@ -6,7 +6,7 @@
 const CONFIG = {
   leagueId: '1353221128079839232',
   api: 'https://api.sleeper.app/v1',
-  cacheKey: 'log_site_data_v6',
+  cacheKey: 'log_site_data_v7',
   playerKey: 'log_players_v1',
   txnKey: 'log_txn_v1_',
   cacheHours: 3,
@@ -165,8 +165,12 @@ async function loadSeason(lg) {
   });
 
   // ---- every week's scores (regular season + playoffs) --------------
-  const games = [];      // regular season head-to-head only
+  const games = [];      // regular season head-to-head, played only
   const scores = {};     // { week: { rosterId: points } }
+  // Every scheduled pairing, played or not, so the site can show the week
+  // ahead. `games` stays results-only: the record book and head-to-head
+  // must never see a matchup that hasn't happened.
+  const pairings = {};   // { week: [{ week, a, ap, b, bp, played }] }
   if (started && lastLeg >= 1) {
     const weeks = range(1, lastLeg);
     const results = await pool(weeks, CONFIG.concurrency, async w => {
@@ -185,20 +189,23 @@ async function loadSeason(lg) {
       });
       if (anyPoints) scores[week] = wk;
 
-      if (week < playoffStart) {
-        const byMatchup = {};
-        data.forEach(m => {
-          if (m.matchup_id == null) return;
-          (byMatchup[m.matchup_id] = byMatchup[m.matchup_id] || []).push(m);
-        });
-        Object.values(byMatchup).forEach(pair => {
-          if (pair.length !== 2) return;
-          const [a, b] = pair;
-          const ap = a.points || 0, bp = b.points || 0;
-          if (ap === 0 && bp === 0) return; // not played yet
+      const byMatchup = {};
+      data.forEach(m => {
+        if (m.matchup_id == null) return;
+        (byMatchup[m.matchup_id] = byMatchup[m.matchup_id] || []).push(m);
+      });
+      const wkPairs = [];
+      Object.values(byMatchup).forEach(pair => {
+        if (pair.length !== 2) return;
+        const [a, b] = pair;
+        const ap = a.points || 0, bp = b.points || 0;
+        const played = ap > 0 || bp > 0;
+        wkPairs.push({ week, a: a.roster_id, ap, b: b.roster_id, bp, played });
+        if (week < playoffStart && played) {
           games.push({ week, a: a.roster_id, ap, b: b.roster_id, bp });
-        });
-      }
+        }
+      });
+      if (wkPairs.length) pairings[week] = wkPairs;
     });
   } else {
     boot.tick(Math.max(lastLeg, 0));
@@ -324,7 +331,7 @@ async function loadSeason(lg) {
     playoffsUnderway,
     playoffTeams: st.playoff_teams || 6,
     lastLeg,
-    teams, games, scores, draft,
+    teams, games, scores, pairings, draft,
     winnersBracket: Array.isArray(wb) ? wb : [],
     losersBracket: Array.isArray(lb) ? lb : [],
     championRoster,
@@ -341,14 +348,22 @@ async function loadSeason(lg) {
 
 async function loadEverything() {
   boot.say('Finding every season…');
-  const chain = await loadLeagueChain();
+  // /state/nfl is the authority on what week it currently is — the league's
+  // own `leg` lags behind during the offseason.
+  const [chain, nflState] = await Promise.all([
+    loadLeagueChain(),
+    getJSON('/state/nfl').catch(() => null)
+  ]);
   boot.plan(chain.length * 20);
   const seasons = [];
   for (const lg of chain) {
     boot.say(`Loading the ${lg.season} season…`);
     seasons.push(await loadSeason(lg));
   }
-  return { fetchedAt: Date.now(), leagueName: chain[0] ? chain[0].name : 'The League', seasons };
+  return {
+    fetchedAt: Date.now(), nflState,
+    leagueName: chain[0] ? chain[0].name : 'The League', seasons
+  };
 }
 
 /* ------------------------------------------------------------------
@@ -451,6 +466,7 @@ function writeCache(raw) {
     const slim = {
       fetchedAt: raw.fetchedAt,
       leagueName: raw.leagueName,
+      nflState: raw.nflState || null,
       seasons: raw.seasons.map(s => Object.assign({}, s, {
         byRoster: undefined, standings: undefined
       }))
