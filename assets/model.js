@@ -304,6 +304,17 @@ function buildModel(raw) {
     return list;
   })();
 
+  /* ---------------- scoring spread --------------------------------------
+     Standard deviation of a single team-week across every game this league
+     has ever played. The win-probability model leans on this rather than a
+     made-up constant, so it reflects how swingy THIS league actually is. */
+  const allPts = weekly.map(w => w.pts);
+  const meanPts = allPts.length ? allPts.reduce((a, b) => a + b, 0) / allPts.length : 0;
+  const scoreSD = allPts.length > 1
+    ? Math.sqrt(allPts.reduce((a, b) => a + (b - meanPts) * (b - meanPts), 0) /
+      (allPts.length - 1))
+    : 25;
+
   /* ---------------- money ---------------------------------------------- */
   const money = computeMoney(seasons, managers, crownList);
   managerList.forEach(m => {
