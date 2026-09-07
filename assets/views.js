@@ -147,13 +147,24 @@ views.home = async () => {
       const showOdds = sa.hasProjection && sb.hasProjection;
       const settled = showOdds && sa.sd + sb.sd < 0.5;
 
-      const side = (t, pts, sd, won, lost) => `
+      // The card stacks the two managers vertically, so the odds have to read
+      // vertically too: each percentage sits on its own manager's row. A single
+      // left-to-right bar underneath forces the reader to work out which end is
+      // whose, which is exactly the confusion it is meant to remove.
+      const pa = showOdds ? Math.round(winProbability(sa, sb) * 100) : null;
+      const pb = pa == null ? null : 100 - pa;
+
+      const side = (t, pts, sd, won, lost, pct) => `
         <div class="mu-side ${won ? 'won' : ''} ${lost ? 'lost' : ''}">
           <img src="${esc(mgr(t.ownerId).avatar)}" alt="" loading="lazy"
             onerror="this.style.visibility='hidden'">
           <div class="mu-who">
             <div class="mu-name">${mgrLink(t.ownerId)}</div>
             <div class="mu-team">${esc(t.teamName)}</div>
+            ${pct == null ? '' : `<div class="mu-odds ${pct > 50 ? 'fav' : pct < 50 ? 'dog' : 'even'}">
+              <div class="mu-odds-bar"><div class="mu-odds-fill" style="width:${pct}%"></div></div>
+              <span class="mu-odds-n">${pct}%</span>
+            </div>`}
           </div>
           <div class="mu-val">
             ${p.played ? `<div class="mu-pts">${n2(pts)}</div>`
@@ -163,22 +174,10 @@ views.home = async () => {
         </div>`;
       const aw = p.played && p.ap > p.bp, bw = p.played && p.bp > p.ap;
 
-      let odds = '';
-      if (showOdds) {
-        const pa = Math.round(winProbability(sa, sb) * 100);
-        const pb = 100 - pa;
-        odds = `<div class="mu-odds ${settled ? 'settled' : ''}">
-          <span class="mu-odds-n ${pa >= pb ? 'lead' : ''}">${pa}%</span>
-          <div class="mu-odds-bar"><div class="mu-odds-fill" style="width:${pa}%"></div></div>
-          <span class="mu-odds-n ${pb > pa ? 'lead' : ''}">${pb}%</span>
-        </div>`;
-      }
-
       return `<div class="mu">
-        ${side(ta, p.ap, sa, aw, bw)}
+        ${side(ta, p.ap, sa, aw, bw, pa)}
         <div class="mu-split"><span>vs</span></div>
-        ${side(tb, p.bp, sb, bw, aw)}
-        ${odds}
+        ${side(tb, p.bp, sb, bw, aw, pb)}
       </div>`;
     }).join('');
 
@@ -189,9 +188,10 @@ views.home = async () => {
         ${anyPlayed
           ? 'Scores and odds refresh every time you load the page.'
           : 'Records shown until kickoff &mdash; scores land here once the games start.'}
-        Win chance comes from Sleeper&rsquo;s projections for whoever is left to play,
-        spread by how swingy this league actually is
-        (&plusmn;${n1(MODEL.scoreSD)} points a week across ${MODEL.totals.games.toLocaleString()} games).</p>
+        Each manager&rsquo;s bar is their chance to win that matchup &mdash; from
+        Sleeper&rsquo;s projections for whoever is left to play, spread by how swingy
+        this league actually is (&plusmn;${n1(MODEL.scoreSD)} points a week across
+        ${MODEL.totals.games.toLocaleString()} games).</p>
       <div class="grid g3 matchups">${cards}</div>`;
     }
   }
