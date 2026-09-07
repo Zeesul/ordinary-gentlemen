@@ -331,7 +331,9 @@ views.standings = params => {
 
 /* ============================= PLAYOFFS ============================ */
 views.playoffs = params => {
-  const list = MODEL.seasons.filter(s => s.winnersBracket.length).slice().reverse();
+  // playoffsUnderway keeps Sleeper's pre-seeded next-season bracket out of here.
+  const list = MODEL.seasons
+    .filter(s => s.playoffsUnderway && s.winnersBracket.length).slice().reverse();
   if (!list.length) return `
     <div class="page-head"><h1 class="page-title">Playoffs</h1></div>
     <div class="empty">No playoff brackets available yet.</div>`;

@@ -6,7 +6,7 @@
 const CONFIG = {
   leagueId: '1353221128079839232',
   api: 'https://api.sleeper.app/v1',
-  cacheKey: 'log_site_data_v5',
+  cacheKey: 'log_site_data_v6',
   playerKey: 'log_players_v1',
   txnKey: 'log_txn_v1_',
   cacheHours: 3,
@@ -215,7 +215,11 @@ async function loadSeason(lg) {
   const toilet = bracketPick(lb, 1);
 
   let championRoster = final ? final.w : null;
-  if (!championRoster && lg.metadata && lg.metadata.latest_league_winner_roster_id) {
+  // Sleeper copies latest_league_winner_roster_id onto a rolled-over league, so
+  // an in-progress season carries the PREVIOUS season's winner. Only trust this
+  // fallback once this season has actually finished.
+  if (!championRoster && lg.status === 'complete' &&
+      lg.metadata && lg.metadata.latest_league_winner_roster_id) {
     championRoster = Number(lg.metadata.latest_league_winner_roster_id);
   }
 
