@@ -11,7 +11,7 @@
   --line-soft:#1e2733;
   --ink:#e8edf4;
   --ink-2:#9fb0c4;
-  --ink-3:#6c7d92;
+  --ink-3:#8c99aa;   /* AA-compliant on panels and tinted cells */
   --gold:#d4af37;
   --gold-soft:#f0d98a;
   --green:#35c48a;
@@ -105,6 +105,9 @@ main{padding:34px 20px 70px;min-height:60vh}
 
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
 .grid{display:grid;gap:16px}
+/* Grid items are min-width:auto by default, so a wide table inside one widens
+   the whole track and pushes the PAGE sideways on a phone. */
+.grid > *{min-width:0}
 .g2{grid-template-columns:repeat(2,1fr)}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
@@ -164,7 +167,15 @@ main{padding:34px 20px 70px;min-height:60vh}
 .stat-value.gold{color:var(--gold)}
 
 /* ------------------------------ tables ------------------------ */
-.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+.table-wrap{
+  overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--panel);
+  /* A fade on the right edge that only appears while there is more to scroll
+     to — otherwise a cut-off table just looks like it ends there. */
+  background-image:linear-gradient(to right,transparent calc(100% - 44px),rgba(13,17,23,.55));
+  background-attachment:local,scroll;
+  background-repeat:no-repeat;
+}
 table{border-collapse:collapse;width:100%;font-size:14px}
 thead th{
   background:var(--panel-2);color:var(--ink-3);text-align:left;
@@ -226,6 +237,26 @@ select:hover,.btn:hover{border-color:#3a4a63}
 }
 .chip:hover{border-color:#3a4a63;color:var(--ink)}
 .chip.active{background:var(--gold);border-color:var(--gold);color:#20180a}
+
+/* ------------------------------ jump bar ---------------------- */
+/* Built by app.js on any page with 5+ sections (today: the record book,
+   which is an 11-screen scroll on a phone). Sticks under the masthead. */
+.jumpbar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  position:sticky;top:0;z-index:20;margin:0 0 18px;padding:10px 0;
+  background:linear-gradient(180deg,var(--bg) 78%,transparent);
+}
+.jumpbar-label{
+  color:var(--ink-3);font-size:10px;letter-spacing:1.6px;text-transform:uppercase;
+  font-weight:700;flex:none;
+}
+.jumpbar .chip-row{gap:6px}
+.jumpbar a.chip{color:var(--ink-2);text-decoration:none}
+.jumpbar a.chip:hover{color:var(--ink);border-color:#3a4a63;text-decoration:none}
+@media (max-width:680px){
+  .jumpbar{padding:8px 0}
+  .jumpbar-label{display:none}
+}
 
 /* ------------------------------ h2h grid ---------------------- */
 .h2h-wrap{overflow:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
@@ -640,6 +671,20 @@ summary::marker{color:var(--ink-3)}
 .footer-meta{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
 .dot{color:#33415a}
 .linklike{background:none;border:none;color:var(--gold-soft);cursor:pointer;font:inherit;padding:0;text-decoration:underline}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;scroll-behavior:auto !important;
+  }
+}
+
+/* Skip link — first tab stop, invisible until focused. */
+.skip{
+  position:absolute;left:-9999px;top:0;z-index:200;background:var(--gold);color:#20180a;
+  padding:10px 16px;border-radius:0 0 8px 0;font-weight:700;
+}
+.skip:focus{left:0;text-decoration:none}
 
 /* ------------------------------ responsive -------------------- */
 @media (max-width:900px){

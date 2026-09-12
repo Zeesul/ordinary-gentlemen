@@ -5,7 +5,41 @@
 
 function buildModel(raw) {
   const seasons = raw.seasons;
-  const played = seasons.filter(s => s.started && s.games.length);
+
+  /* ---------------- what week is it right now? --------------------------
+     Sleeper's /state/nfl is the authority. Fall back to the last week that
+     actually has scores, so the site still knows where it is if that call
+     failed. Clamped to the season's own week range either way. */
+  const liveSeason = seasons.find(s => s.inProgress) || null;
+  const nflState = raw.nflState || null;
+  let currentWeek = null;
+  if (liveSeason) {
+    let w = null;
+    if (nflState && String(nflState.season) === String(liveSeason.season) &&
+        nflState.season_type === 'regular') {
+      w = Number(nflState.week || nflState.display_week) || null;
+    }
+    if (!w) {
+      const scored = Object.keys(liveSeason.pairings || {}).map(Number)
+        .filter(x => (liveSeason.pairings[x] || []).some(p => p.played));
+      w = scored.length ? Math.max.apply(null, scored) : 1;
+    }
+    currentWeek = Math.max(1, Math.min(w, liveSeason.lastLeg || w));
+  }
+
+  /* ---------------- finished games only ---------------------------------
+     A week in progress is full of half-played lineups — teams sitting on 0.0
+     because their players have not kicked off yet. Those are not results, and
+     letting them through gives you "lowest score ever: 0.00" and career
+     records that count a half-finished week. Everything historical is built
+     from `finalGames`; the live views still read `games` for current scores. */
+  seasons.forEach(s => {
+    s.finalGames = (s.inProgress && currentWeek)
+      ? s.games.filter(g => g.week < currentWeek)
+      : s.games;
+  });
+
+  const played = seasons.filter(s => s.started && s.finalGames.length);
 
   seasons.forEach(s => {
     s.byRoster = {};
@@ -60,7 +94,7 @@ function buildModel(raw) {
   };
 
   played.forEach(s => {
-    s.games.forEach(g => {
+    s.finalGames.forEach(g => {
       const ta = s.byRoster[g.a], tb = s.byRoster[g.b];
       if (!ta || !tb) return;
       const A = ta.ownerId, B = tb.ownerId;
@@ -132,7 +166,7 @@ function buildModel(raw) {
   const crownList = [];
   played.forEach(s => {
     const byWeek = {};
-    s.games.forEach(g => {
+    s.finalGames.forEach(g => {
       (byWeek[g.week] = byWeek[g.week] || []).push(
         { rosterId: g.a, pts: g.ap }, { rosterId: g.b, pts: g.bp });
     });
@@ -324,27 +358,6 @@ function buildModel(raw) {
     m.net = m.winnings - m.paidIn;
     m.cashes = row ? row.awards.length : 0;
   });
-
-  /* ---------------- what week is it right now? --------------------------
-     Sleeper's /state/nfl is the authority. Fall back to the last week that
-     actually has scores, so the site still knows where it is if that call
-     failed. Clamped to the season's own week range either way. */
-  const liveSeason = seasons.find(s => s.inProgress) || null;
-  const nflState = raw.nflState || null;
-  let currentWeek = null;
-  if (liveSeason) {
-    let w = null;
-    if (nflState && String(nflState.season) === String(liveSeason.season) &&
-        nflState.season_type === 'regular') {
-      w = Number(nflState.week || nflState.display_week) || null;
-    }
-    if (!w) {
-      const scored = Object.keys(liveSeason.pairings || {}).map(Number)
-        .filter(x => (liveSeason.pairings[x] || []).some(p => p.played));
-      w = scored.length ? Math.max.apply(null, scored) : 1;
-    }
-    currentWeek = Math.max(1, Math.min(w, liveSeason.lastLeg || w));
-  }
 
   return {
     fetchedAt: raw.fetchedAt,

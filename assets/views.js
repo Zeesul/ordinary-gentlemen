@@ -56,7 +56,7 @@ function recCard(label, value, who, when, tone) {
 
 function table(headers, rows, cls) {
   const head = headers.map(h =>
-    `<th class="${h && h.num ? 'num' : ''}">${esc(h && h.label != null ? h.label : h)}</th>`).join('');
+    `<th scope="col" class="${h && h.num ? 'num' : ''}">${esc(h && h.label != null ? h.label : h)}</th>`).join('');
   return `<div class="table-wrap"><table class="${cls || ''}">
     <thead><tr>${head}</tr></thead><tbody>${rows.join('') ||
       '<tr><td colspan="' + headers.length + '" class="muted" style="text-align:center;padding:26px">Nothing here yet.</td></tr>'}</tbody></table></div>`;
@@ -390,7 +390,7 @@ views.standings = params => {
     }).join('');
     return `<details class="panel" style="margin-bottom:10px">
       <summary>Week ${w}</summary>
-      <table style="margin-top:10px">${inner}</table></details>`;
+      <div class="table-wrap" style="margin-top:10px"><table>${inner}</table></div></details>`;
   }).join('');
 
   return `
@@ -564,8 +564,8 @@ views.h2h = params => {
   const ms = MODEL.managerList
     .filter(m => !onlyActive || m.active)
     .slice().sort((a, b) => a.name.localeCompare(b.name));
-  const head = ['<th>Manager</th>'].concat(ms.map(m =>
-    `<th title="${esc(m.name)}">${esc(m.name.slice(0, 7))}</th>`)).join('');
+  const head = ['<th scope="col">Manager</th>'].concat(ms.map(m =>
+    `<th scope="col" title="${esc(m.name)}">${esc(m.name.slice(0, 7))}</th>`)).join('');
 
   const rows = ms.map(a => {
     const cells = ms.map(b => {
@@ -583,7 +583,7 @@ views.h2h = params => {
       if (r) { acc.w += r.w; acc.l += r.l; acc.t += r.t; }
       return acc;
     }, { w: 0, l: 0, t: 0 });
-    return `<tr><th>${esc(a.name)}</th>${cells}
+    return `<tr><th scope="row">${esc(a.name)}</th>${cells}
       <td class="cell"><strong>${tot.w}-${tot.l}${tot.t ? '-' + tot.t : ''}</strong></td></tr>`;
   });
 
@@ -1564,10 +1564,11 @@ views.money = () => {
         </div>
         ${status}
       </div>
-      <table style="margin-top:12px">
-        <thead><tr><th>Prize</th><th class="num">Amount</th><th>Winner</th></tr></thead>
+      <div class="table-wrap" style="margin-top:12px"><table>
+        <thead><tr><th scope="col">Prize</th><th scope="col" class="num">Amount</th>
+          <th scope="col">Winner</th></tr></thead>
         <tbody>${rows.join('')}</tbody>
-      </table>
+      </table></div>
       ${whDetail}
     </div>`;
   }).join('');

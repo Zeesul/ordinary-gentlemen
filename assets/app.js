@@ -21,8 +21,11 @@ function setHash(route, params) {
 function markNav(route) {
   $$('.mainnav a').forEach(a => {
     const r = a.dataset.route;
-    a.classList.toggle('active', r === route ||
-      (r === 'managers' && route === 'manager'));
+    const on = r === route || (r === 'managers' && route === 'manager');
+    a.classList.toggle('active', on);
+    // tell assistive tech which page this is, not just which link looks gold
+    if (on) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
   });
 }
 
@@ -137,6 +140,32 @@ function wirePage(route) {
       apply();
     });
     if (search) search.addEventListener('input', apply);
+  }
+
+  /* A page with many sections (the record book runs to ten) is a long scroll
+     with no way back. Give those pages a jump bar built from their own
+     headings — no per-page markup needed. */
+  const sections = $$('.section-title', host);
+  if (sections.length >= 5 && !$('#jumpbar', host)) {
+    const links = sections.map((h, i) => {
+      if (!h.id) h.id = 'sec-' + i;
+      return `<a class="chip" href="#${h.id}">${esc(h.textContent.trim())}</a>`;
+    }).join('');
+    const bar = document.createElement('div');
+    bar.id = 'jumpbar';
+    bar.className = 'jumpbar';
+    bar.innerHTML = `<span class="jumpbar-label">Jump to</span>
+      <div class="chip-row">${links}</div>`;
+    const anchor = $('.page-head', host) || host.firstElementChild;
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor.nextSibling);
+    // hash links inside a hash-routed SPA must not change the route
+    bar.addEventListener('click', e => {
+      const a = e.target.closest('a[href^="#sec-"]');
+      if (!a) return;
+      e.preventDefault();
+      const el = $('#' + a.getAttribute('href').slice(1), host);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
 
   wireCharts(host);
