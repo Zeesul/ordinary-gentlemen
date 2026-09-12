@@ -46,6 +46,17 @@ a{color:var(--gold-soft);text-decoration:none}
 a:hover{text-decoration:underline}
 .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
 
+/* Wide and ultrawide displays.
+   A fixed 1180px shell leaves two thirds of a 3440px monitor empty and forces
+   the draft board to scroll sideways with room to spare. Step the shell up
+   with the viewport instead. Prose stays capped in ch further down, so lines
+   never get too long to read — only the tables and the board actually widen. */
+@media (min-width:1500px){ .wrap{max-width:1340px} }
+@media (min-width:1750px){ .wrap{max-width:1520px} }
+@media (min-width:2100px){ .wrap{max-width:1720px} }
+/* 2000px is the point where all 12 draft columns fit without scrolling. */
+@media (min-width:2800px){ .wrap{max-width:2000px} }
+
 /* ------------------------------ masthead ---------------------- */
 .masthead{
   border-bottom:1px solid var(--line);
@@ -83,7 +94,7 @@ main{padding:34px 20px 70px;min-height:60vh}
   font-family:"Barlow Condensed",Inter,sans-serif;font-weight:700;font-size:38px;
   letter-spacing:.5px;text-transform:uppercase;margin:0;line-height:1.05;
 }
-.page-sub{color:var(--ink-3);margin:7px 0 0;font-size:14px}
+.page-sub{color:var(--ink-3);margin:7px 0 0;font-size:14px;max-width:80ch}
 
 .section-title{
   font-family:"Barlow Condensed",Inter,sans-serif;font-weight:700;font-size:22px;
@@ -366,6 +377,7 @@ a.trophy-mgr:hover img{border-color:var(--gold)}
 .notice{
   background:rgba(90,169,230,.09);border:1px solid rgba(90,169,230,.3);
   border-radius:10px;padding:12px 15px;color:#bcd8f0;font-size:13.5px;margin-bottom:18px;
+  max-width:110ch;
 }
 
 .loading-page{text-align:center;padding:70px 20px}
@@ -536,6 +548,9 @@ table.dboard th,table.dboard td{padding:0;border:0;vertical-align:top}
 }
 .drow .dname{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .drow .dmeta{white-space:nowrap}
+
+/* Tall screens (a 1440px-high ultrawide) can hold all 14 rounds at once. */
+@media (min-height:1150px){ .dboard-wrap{max-height:min(84vh,1200px)} }
 
 @media (max-width:680px){
   .dhead{min-width:136px}
