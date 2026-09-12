@@ -1211,6 +1211,9 @@ views.manager = async params => {
 };
 
 /* ============================== DRAFT ============================== */
+/* A draft is a grid, not a list: rounds down, managers across. Sleeper gives
+   every pick a draft_slot that stays with the same roster all draft, so that
+   slot is a real column and the whole board can be laid out honestly. */
 views.draft = params => {
   const list = MODEL.seasons.filter(s => s.draft && s.draft.picks.length).slice().reverse();
   if (!list.length) return `
@@ -1220,67 +1223,126 @@ views.draft = params => {
   const season = params.season && list.find(s => s.season === params.season)
     ? params.season : list[0].season;
   const s = list.find(x => x.season === season);
+  const mode = params.view === 'mgr' ? 'mgr' : 'board';
+  const picks = s.draft.picks;
 
-  const rounds = {};
-  s.draft.picks.forEach(p => { (rounds[p.round] = rounds[p.round] || []).push(p); });
+  const slots = Array.from(new Set(picks.map(p => p.slot))).sort((a, b) => a - b);
+  const rosterAt = {};
+  picks.forEach(p => { if (rosterAt[p.slot] == null) rosterAt[p.slot] = p.rosterId; });
+  const teamAt = slot => s.byRoster[rosterAt[slot]] || null;
 
-  const posColor = p => ({
-    QB: '#e5615f', RB: '#35c48a', WR: '#5aa9e6', TE: '#d4af37', K: '#9b8ec4', DEF: '#7f8fa4'
-  }[p] || '#7f8fa4');
+  const rounds = Array.from(new Set(picks.map(p => p.round))).sort((a, b) => a - b);
+  const cell = {};            // cell[round][slot] -> pick
+  const nthInRound = {};      // overall pick no -> its place within the round
+  rounds.forEach(r => {
+    cell[r] = {};
+    picks.filter(p => p.round === r).sort((a, b) => a.pick - b.pick)
+      .forEach((p, i) => { cell[r][p.slot] = p; nthInRound[p.pick] = i + 1; });
+  });
 
-  const blocks = Object.keys(rounds).sort((a, b) => a - b).map(r => {
-    const rows = rounds[r].sort((a, b) => a.pick - b.pick).map(p => {
-      const t = s.byRoster[p.rosterId];
-      return `<tr>
-        <td class="rank">${p.pick}</td>
-        <td>${t ? mgrCell(t.ownerId, t.teamName) : '<span class="muted">Unknown</span>'}</td>
-        <td><div class="pcell">${playerFace(p.playerId)}
-          <span><strong>${esc(p.player)}</strong>${p.keeper ? ' <span class="pill pill-gold">Keeper</span>' : ''}</span></div></td>
-        <td><span style="color:${posColor(p.position)};font-weight:700">${esc(p.position)}</span></td>
-        <td class="muted">${esc(p.team)}</td>
-      </tr>`;
-    }).join('');
-    return `<details class="panel" style="margin-bottom:10px" ${r === '1' ? 'open' : ''}>
-      <summary>Round ${r}</summary>
-      <table style="margin-top:10px">
-        <thead><tr><th>Pick</th><th>Manager</th><th>Player</th><th>Pos</th><th>Team</th></tr></thead>
-        <tbody>${rows}</tbody></table></details>`;
+  const POS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+  const posClass = pos => 'pos-' + (POS.indexOf(pos) !== -1 ? pos : 'NA');
+  const label = p => p.round + '.' + String(nthInRound[p.pick] || 0).padStart(2, '0');
+  const meta = p => esc([p.position, p.team].filter(Boolean).join(' · '));
+  // data-* attributes let the filters dim cells in place, so the board keeps
+  // its shape instead of collapsing as you type.
+  const attrs = p => `data-pos="${esc(p.position)}" data-name="${esc(String(p.player).toLowerCase())}"`;
+
+  /* ---- board ---- */
+  const head = slots.map(sl => {
+    const t = teamAt(sl);
+    return `<th class="dhead">${t
+      ? `<a class="dhead-in" href="#/manager?id=${encodeURIComponent(t.ownerId)}">
+          <img src="${esc(mgr(t.ownerId).avatar)}" alt="" loading="lazy"
+            onerror="this.style.visibility='hidden'">
+          <span class="dhead-name">${esc(mgr(t.ownerId).name)}</span></a>`
+      : `<span class="muted small">Slot ${sl}</span>`}
+      <span class="dhead-slot">Slot ${sl}</span></th>`;
   }).join('');
 
-  const firstRound = (rounds[1] || []).sort((a, b) => a.pick - b.pick).map(p => {
-    const t = s.byRoster[p.rosterId];
-    return `<div class="stat pick-card">
-      <div class="stat-label">Pick ${p.pick}</div>
-      <div class="pick-body">
-        ${playerFace(p.playerId, 'big')}
-        <div>
-          <div class="stat-value" style="font-size:19px">${esc(p.player)}</div>
-          <div class="stat-meta">${esc(p.position)} &middot; ${esc(p.team)}</div>
-        </div>
-      </div>
-      <div class="stat-meta" style="margin-top:6px">${t ? mgrLink(t.ownerId) : '?'}</div>
+  const body = rounds.map(r => `<tr>
+      <th class="dround"><span class="drnum">${r}</span>
+        <span class="darrow">${r % 2 === 0 ? '&larr;' : '&rarr;'}</span></th>
+      ${slots.map(sl => {
+        const p = cell[r][sl];
+        if (!p) return '<td class="dempty"></td>';
+        return `<td><div class="dcell ${posClass(p.position)}" ${attrs(p)}>
+          <span class="dpick">${esc(label(p))}${p.keeper
+            ? ' <span class="dkeep">KEEPER</span>' : ''}</span>
+          <span class="dname">${esc(p.player)}</span>
+          <span class="dmeta">${meta(p)}</span>
+        </div></td>`;
+      }).join('')}
+    </tr>`).join('');
+
+  /* ---- by manager ---- */
+  const cards = slots.map(sl => {
+    const t = teamAt(sl);
+    const mine = picks.filter(p => p.slot === sl).sort((a, b) => a.pick - b.pick);
+    const counts = {};
+    mine.forEach(p => { counts[p.position] = (counts[p.position] || 0) + 1; });
+    const summary = POS.filter(k => counts[k]).map(k =>
+      `<span class="dcount ${posClass(k)}">${k} ${counts[k]}</span>`).join('');
+    return `<div class="dmgr">
+      <div class="dmgr-head">${t
+        ? mgrCell(t.ownerId, 'Draft slot ' + sl)
+        : `<div class="muted">Slot ${sl}</div>`}</div>
+      <div class="dcounts">${summary}</div>
+      <ol class="dlist">${mine.map(p => `<li class="drow ${posClass(p.position)}" ${attrs(p)}>
+        <span class="dpick">${esc(label(p))}</span>
+        <span class="dname">${esc(p.player)}${p.keeper
+          ? ' <span class="dkeep">KEEPER</span>' : ''}</span>
+        <span class="dmeta">${meta(p)}</span>
+      </li>`).join('')}</ol>
     </div>`;
   }).join('');
 
-  const keepers = s.draft.picks.filter(p => p.keeper).map(p => {
-    const t = s.byRoster[p.rosterId];
-    return `<tr><td>${t ? mgrCell(t.ownerId) : '?'}</td>
-      <td><div class="pcell">${playerFace(p.playerId)}<span><strong>${esc(p.player)}</strong></span></div></td>
-      <td>${esc(p.position)}</td><td class="num">Rd ${p.round}</td></tr>`;
-  });
+  /* ---- toolbar ---- */
+  const posChips = ['ALL'].concat(POS).map(k =>
+    `<button class="chip ${k === 'ALL' ? 'active' : ''}" data-pos="${k}">${k === 'ALL' ? 'All' : k}</button>`).join('');
+
+  const keepers = picks.filter(p => p.keeper);
+  const when = s.draftStart ? fmtDate(s.draftStart) : '';
 
   return `
   <div class="page-head">
     <h1 class="page-title">Draft History</h1>
-    <p class="page-sub">${esc(s.draft.rounds)}-round ${esc(s.draft.type)} draft &middot; ${s.draft.picks.length} picks.</p>
+    <p class="page-sub">${esc(String(s.draft.rounds))}-round ${esc(s.draft.type)} draft &middot;
+      ${picks.length} picks &middot; ${slots.length} managers${when ? ' &middot; ' + esc(when) : ''}.</p>
   </div>
   ${seasonChips(list, season, 'draft')}
-  <h3 class="section-title">${esc(season)} First Round</h3>
-  <div class="grid g4">${firstRound}</div>
+
+  <div class="toolbar" id="draftTools" data-pos="ALL" data-season="${esc(season)}">
+    <div class="chip-row" id="draftView">
+      <button class="chip ${mode === 'board' ? 'active' : ''}" data-view="board">Board</button>
+      <button class="chip ${mode === 'mgr' ? 'active' : ''}" data-view="mgr">By manager</button>
+    </div>
+    <span class="tool-sep"></span>
+    <div class="chip-row">${posChips}</div>
+    <input id="draftSearch" class="dsearch" type="search" placeholder="Find a player&hellip;"
+      autocomplete="off" aria-label="Find a player in this draft">
+    <span class="small muted" id="draftCount"></span>
+  </div>
+
+  ${mode === 'board' ? `
+    <div class="dboard-wrap">
+      <table class="dboard">
+        <thead><tr><th class="dcorner">Rd</th>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <p class="small muted" style="margin-top:10px">
+      Snake order &mdash; odd rounds run left to right, even rounds right to left.
+      Scroll sideways for the rest of the league; the round column stays put.</p>`
+    : `<div class="grid g3 dmgrs">${cards}</div>`}
+
   ${keepers.length ? `<h3 class="section-title">Keepers</h3>
-    ${table(['Manager', 'Player', 'Pos', { label: 'Round', num: 1 }], keepers)}` : ''}
-  <h3 class="section-title">Full Draft Board</h3>
-  ${blocks}`;
+    ${table(['Manager', 'Player', 'Pos', { label: 'Round', num: 1 }], keepers.map(p => {
+      const t = s.byRoster[p.rosterId];
+      return `<tr><td>${t ? mgrCell(t.ownerId) : '?'}</td>
+        <td><div class="pcell">${playerFace(p.playerId)}<span><strong>${esc(p.player)}</strong></span></div></td>
+        <td>${esc(p.position)}</td><td class="num">Rd ${p.round}</td></tr>`;
+    }))}` : ''}`;
 };
 
 /* ============================== TRADES ============================= */

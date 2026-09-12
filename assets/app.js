@@ -36,7 +36,10 @@ function wirePage(route) {
     chips.addEventListener('click', e => {
       const btn = e.target.closest('.chip');
       if (!btn) return;
-      setHash(chips.dataset.route || route, { season: btn.dataset.season });
+      // carry the current view mode across a season change (draft board/list)
+      const cur = parseHash().params;
+      setHash(chips.dataset.route || route,
+        { season: btn.dataset.season, view: cur.view });
     });
   }
 
@@ -94,6 +97,47 @@ function wirePage(route) {
   const h2hActive = $('#h2hActive', host);
   if (h2hActive) h2hActive.addEventListener('change', () =>
     setHash('h2h', { active: h2hActive.checked ? '1' : '' }));
+
+  // draft page: board/manager toggle, position chips and player search
+  const dTools = $('#draftTools', host);
+  if (dTools) {
+    const view = $('#draftView', host);
+    if (view) view.addEventListener('click', e => {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      setHash('draft', { season: dTools.dataset.season, view: btn.dataset.view });
+    });
+
+    const search = $('#draftSearch', host);
+    const count = $('#draftCount', host);
+    // Filtering dims picks in place rather than removing them, so the board
+    // keeps its shape and you can still see WHERE the runs happened.
+    const apply = () => {
+      const pos = dTools.dataset.pos || 'ALL';
+      const q = (search && search.value || '').trim().toLowerCase();
+      const items = $$('.dcell[data-pos], .drow[data-pos]', host);
+      let shown = 0;
+      items.forEach(el => {
+        const hit = (pos === 'ALL' || el.dataset.pos === pos) &&
+          (!q || el.dataset.name.indexOf(q) !== -1);
+        el.classList.toggle('dim', !hit);
+        if (hit) shown++;
+      });
+      if (count) {
+        count.textContent = (pos === 'ALL' && !q) ? ''
+          : shown + ' of ' + items.length + ' picks';
+      }
+    };
+
+    dTools.addEventListener('click', e => {
+      const btn = e.target.closest('.chip[data-pos]');
+      if (!btn) return;
+      dTools.dataset.pos = btn.dataset.pos;
+      $$('.chip[data-pos]', dTools).forEach(x => x.classList.toggle('active', x === btn));
+      apply();
+    });
+    if (search) search.addEventListener('input', apply);
+  }
 
   wireCharts(host);
 
