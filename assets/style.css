@@ -125,6 +125,38 @@ main{padding:34px 20px 70px;min-height:60vh}
 }
 .hero p{color:var(--ink-2);margin:0;max-width:62ch}
 
+/* ------------------------------ trophy hero --------------------- */
+.trophy-hero{display:flex;align-items:center;gap:32px}
+.trophy-hero-art{flex:0 0 auto;width:150px}
+.trophy-hero-art svg{width:100%;height:auto;display:block}
+.trophy-hero-body{flex:1 1 auto;min-width:0}
+.plaque-list{
+  list-style:none;margin:16px 0 0;padding:14px 18px;column-count:2;column-gap:28px;
+  background:rgba(13,17,23,.45);border:1px solid var(--line);border-radius:8px;
+}
+.plaque-list li{
+  display:flex;align-items:baseline;gap:10px;padding:6px 0;
+  border-bottom:1px solid rgba(212,175,55,.16);break-inside:avoid;
+}
+.plaque-list li:last-child{border-bottom:none}
+.plaque-year{
+  flex:0 0 auto;font-family:"Barlow Condensed",Inter,sans-serif;font-weight:700;
+  font-size:15px;color:var(--gold-soft);letter-spacing:.5px;
+}
+.plaque-name{
+  flex:1 1 auto;min-width:0;font-family:"Barlow Condensed",Inter,sans-serif;
+  font-weight:600;font-size:15px;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--ink);text-shadow:0 1px 0 rgba(255,255,255,.08),0 -1px 0 rgba(0,0,0,.5);
+  text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.plaque-name:hover{color:var(--gold-soft)}
+.plaque-empty{color:var(--ink-3);margin:16px 0 0}
+@media (max-width:720px){
+  .trophy-hero{flex-direction:column;align-items:flex-start;gap:18px}
+  .trophy-hero-art{width:110px;align-self:center}
+  .plaque-list{column-count:1}
+}
+
 /* ------------------------------ draft countdown --------------- */
 .draft-hero{
   display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;

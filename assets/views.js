@@ -634,6 +634,65 @@ views.playoffs = params => {
 };
 
 /* ============================ CHAMPIONS ============================ */
+/* A static gold cup illustration paired with a real, data-driven "engraved"
+   list of every champion (year + manager). Pulls from the same
+   completedSeasons data the per-year cards below already use, so a newly
+   crowned champion shows up here automatically next season with no
+   manual edit required. */
+function trophyHero(seasons) {
+  const rows = seasons
+    .filter(s => s.byRoster[s.championRoster])
+    .map(s => {
+      const c = s.byRoster[s.championRoster];
+      return `<li><span class="plaque-year">${esc(s.season)}</span>
+        <a class="plaque-name" href="#/manager?id=${encodeURIComponent(c.ownerId)}">${esc(mgr(c.ownerId).name)}</a></li>`;
+    }).join('');
+
+  const list = rows
+    ? `<ul class="plaque-list">${rows}</ul>`
+    : `<p class="plaque-empty">No champion crowned yet &mdash; check back once the first season wraps.</p>`;
+
+  return `<div class="hero trophy-hero">
+    <div class="trophy-hero-art" aria-hidden="true">
+      <svg viewBox="0 0 240 320" class="trophy-cup" role="img" aria-label="Championship trophy">
+        <defs>
+          <linearGradient id="cupGold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#f7e6a3"/>
+            <stop offset="45%" stop-color="#d4af37"/>
+            <stop offset="100%" stop-color="#8a6b1e"/>
+          </linearGradient>
+          <linearGradient id="cupGoldDark" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#c8a133"/>
+            <stop offset="100%" stop-color="#6b5518"/>
+          </linearGradient>
+          <filter id="cupShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.45"/>
+          </filter>
+        </defs>
+        <ellipse cx="120" cy="170" rx="86" ry="34" fill="#d4af37" opacity=".08"/>
+        <g filter="url(#cupShadow)">
+          <path d="M46,74 C18,80 16,118 50,128" fill="none" stroke="url(#cupGold)" stroke-width="11" stroke-linecap="round"/>
+          <path d="M194,74 C222,80 224,118 190,128" fill="none" stroke="url(#cupGold)" stroke-width="11" stroke-linecap="round"/>
+          <path d="M60,54 C60,98 80,146 120,156 C160,146 180,98 180,54 C180,63 154,69 120,69 C86,69 60,63 60,54 Z"
+            fill="url(#cupGold)" stroke="#5c4a1f" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M107,156 L133,156 L140,198 L100,198 Z" fill="url(#cupGold)" stroke="#5c4a1f" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M88,198 L152,198 L166,220 L74,220 Z" fill="url(#cupGold)" stroke="#5c4a1f" stroke-width="3" stroke-linejoin="round"/>
+          <rect x="66" y="220" width="108" height="20" rx="5" fill="url(#cupGoldDark)" stroke="#5c4a1f" stroke-width="3"/>
+          <path d="M120,18 L126,32 L141,32 L129,41 L134,55 L120,46 L106,55 L111,41 L99,32 L114,32 Z"
+            fill="url(#cupGold)" stroke="#5c4a1f" stroke-width="2" stroke-linejoin="round"/>
+        </g>
+        <ellipse cx="92" cy="50" rx="11" ry="4.5" fill="rgba(255,255,255,.4)" transform="rotate(-18 92 50)"/>
+      </svg>
+    </div>
+    <div class="trophy-hero-body">
+      <div class="hero-eyebrow">Trophy Room</div>
+      <h2>Hall of Champions</h2>
+      <p>Every champion in league history, engraved.</p>
+      ${list}
+    </div>
+  </div>`;
+}
+
 views.champions = () => {
   const seasons = MODEL.completedSeasons.slice().reverse();
   const cards = seasons.map(s => {
@@ -680,10 +739,7 @@ views.champions = () => {
   </tr>`);
 
   return `
-  <div class="page-head">
-    <h1 class="page-title">Trophy Room</h1>
-    <p class="page-sub">Every champion in league history.</p>
-  </div>
+  ${trophyHero(seasons)}
   <div class="grid g3">${cards.join('')}</div>
 
   <h3 class="section-title">How Everyone Has Finished</h3>
