@@ -212,6 +212,55 @@ views.home = async params => {
     }
   }
 
+  // --- recent activity -------------------------------------------------
+  /* Real trades, waiver claims and free-agent moves for the live season,
+     newest first. Same data the Trades page already fetches, trimmed to
+     the last handful of events and given a compact one-line-per-event
+     treatment. Skipped entirely off-season or before anyone's made a move. */
+  let activityBlock = '';
+  if (live) {
+    await loadPlayers();
+    const txns = (await loadTransactions(live)).slice(0, 6);
+    const ownerOf = rid => {
+      const t = live.byRoster[rid];
+      return t ? t.ownerId : null;
+    };
+    const playerList = ids => ids.map(pid => esc(playerMeta(pid).name)).join(', ');
+
+    const items = txns.map(t => {
+      let icon = '&harr;', text = '';
+      if (t.type === 'trade') {
+        icon = '&harr;';
+        const names = t.rosters.map(rid => mgrLink(ownerOf(rid)));
+        text = names.length <= 2
+          ? `${names[0] || 'A manager'} and ${names[1] || 'another manager'} made a trade`
+          : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} made a trade`;
+      } else {
+        const added = Object.keys(t.adds || {});
+        const dropped = t.drops ? Object.keys(t.drops) : [];
+        const rid = t.rosters[0];
+        const bidNote = t.type === 'waiver' && t.bid ? ` for $${t.bid}` : '';
+        icon = added.length ? '+' : '&minus;';
+        text = added.length
+          ? `${mgrLink(ownerOf(rid))} added ${playerList(added)}${bidNote}` +
+            (dropped.length ? `, dropped ${playerList(dropped)}` : '')
+          : `${mgrLink(ownerOf(rid))} dropped ${playerList(dropped) || 'a player'}`;
+      }
+      return `<div class="activity-item">
+        <span class="activity-icon">${icon}</span>
+        <span class="activity-text">${text}</span>
+        <span class="activity-when">${esc(timeAgo(t.created))}</span>
+      </div>`;
+    }).join('');
+
+    if (items) {
+      activityBlock = `
+      <h3 class="section-title">Recent Activity</h3>
+      <div class="panel activity-list">${items}</div>
+      <p class="small muted" style="margin-top:10px"><a href="#/trades">Full transaction history &rarr;</a></p>`;
+    }
+  }
+
   // --- weekly $25 bounty --------------------------------------------
   /* Deliberately independent of `finalGames` / `crownList`: those wait for
      Sleeper's nflState.week to roll over, which can lag a real day or more
@@ -389,6 +438,8 @@ views.home = async params => {
       <div class="stat-meta">${topScore ? esc(mgr(topScore.ownerId).name) + ' &middot; ' + topScore.season + ' Wk ' + topScore.week : ''}</div>
     </div>
   </div>
+
+  ${activityBlock}
 
   ${weekBlock}
 
