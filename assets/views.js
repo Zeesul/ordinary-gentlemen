@@ -168,10 +168,26 @@ views.home = async params => {
         </div>`;
       const aw = p.played && p.ap > p.bp, bw = p.played && p.bp > p.ap;
 
+      // A plain comparison of the two sides' totals (actual points plus
+      // whatever Sleeper still projects for anyone left to play) turned
+      // into a bar, the same numbers the proj line already shows. No
+      // model, no odds, just those two numbers side by side.
+      const totalExp = sa.expected + sb.expected;
+      const barPct = totalExp > 0 ? Math.round(sa.expected / totalExp * 100) : 50;
+      const lead = sa.expected === sb.expected ? 'tie' : (sa.expected > sb.expected ? 'a' : 'b');
+      const bar = totalExp > 0 ? `
+        <div class="mu-bar">
+          <div class="mu-bar-seg ${lead === 'a' ? 'lead' : lead === 'tie' ? 'tie' : 'trail'}"
+            style="width:${barPct}%"></div>
+          <div class="mu-bar-seg ${lead === 'b' ? 'lead' : lead === 'tie' ? 'tie' : 'trail'}"
+            style="width:${100 - barPct}%"></div>
+        </div>` : '';
+
       return `<div class="mu">
         ${side(ta, p.ap, sa, aw, bw)}
         <div class="mu-split"><span>vs</span></div>
         ${side(tb, p.bp, sb, bw, aw)}
+        ${bar}
       </div>`;
     }).join('');
 

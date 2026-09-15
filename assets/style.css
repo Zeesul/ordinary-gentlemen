@@ -311,6 +311,15 @@ td.none{color:#3b4757}
 }
 .mu-split::before,.mu-split::after{content:"";flex:1;height:1px;background:var(--line-soft)}
 
+/* A plain side-by-side comparison of the two teams' totals, under the
+   split line. Green leads, red trails, grey means dead even. No
+   probability behind it, just whichever number is bigger. */
+.mu-bar{display:flex;height:5px}
+.mu-bar-seg{height:100%;background:var(--line)}
+.mu-bar-seg.lead{background:var(--green)}
+.mu-bar-seg.trail{background:var(--red)}
+.mu-bar-seg.tie{background:var(--ink-3)}
+
 /* ------------------------------ weekly bounty ------------------ */
 .bounty-panel{
   background:linear-gradient(135deg,rgba(212,175,55,.10),var(--panel) 60%);

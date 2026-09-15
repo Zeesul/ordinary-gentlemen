@@ -179,6 +179,9 @@ async function loadSeason(lg) {
     };
   });
 
+  const rosterById = {};
+  (rosters || []).forEach(r => { rosterById[r.roster_id] = r; });
+
   // ---- every week's scores (regular season + playoffs) --------------
   const games = [];      // regular season head-to-head, played only
   const scores = {};     // { week: { rosterId: points } }
@@ -230,9 +233,19 @@ async function loadSeason(lg) {
       if (keepLineups) {
         const byRoster = {};
         data.forEach(m => {
+          let starters = m.starters;
+          let startersPoints = m.starters_points;
+          if (!starters || !starters.length) {
+            const r = rosterById[m.roster_id];
+            if (r && r.starters && r.starters.length) {
+              const pts = m.players_points || {};
+              starters = r.starters;
+              startersPoints = starters.map(pid => pts[pid] || 0);
+            }
+          }
           byRoster[m.roster_id] = {
-            starters: m.starters || [],
-            startersPoints: m.starters_points || [],
+            starters: starters || [],
+            startersPoints: startersPoints || [],
             points: m.points || 0
           };
         });
