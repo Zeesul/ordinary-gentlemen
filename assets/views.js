@@ -122,8 +122,7 @@ views.home = async () => {
 
   // --- this week's matchups ------------------------------------------
   /* Built from `pairings`, not `games`, so the card is there before kickoff.
-     Scores replace records the moment a matchup has points on the board, and
-     the win bar hardens from a coin flip into a result as the week plays out. */
+     Scores replace records the moment a matchup has points on the board. */
   let weekBlock = '';
   if (live && MODEL.currentWeek) {
     const wk = MODEL.currentWeek;
@@ -135,49 +134,34 @@ views.home = async () => {
 
     const sideFor = rid => {
       const lu = lineups[rid] || {};
-      return projectSide(lu.starters, lu.startersPoints, proj, MODEL.scoreSD, today);
+      return projectSide(lu.starters, lu.startersPoints, proj, today);
     };
 
     const cards = pairs.map(p => {
       const ta = live.byRoster[p.a], tb = live.byRoster[p.b];
       if (!ta || !tb) return '';
       const sa = sideFor(p.a), sb = sideFor(p.b);
-      // No projections (feed down, or an odd week) means no odds — the rest
-      // of the card still works.
-      const showOdds = sa.hasProjection && sb.hasProjection;
-      const settled = showOdds && sa.sd + sb.sd < 0.5;
 
-      // The card stacks the two managers vertically, so the odds have to read
-      // vertically too: each percentage sits on its own manager's row. A single
-      // left-to-right bar underneath forces the reader to work out which end is
-      // whose, which is exactly the confusion it is meant to remove.
-      const pa = showOdds ? Math.round(winProbability(sa, sb) * 100) : null;
-      const pb = pa == null ? null : 100 - pa;
-
-      const side = (t, pts, sd, won, lost, pct) => `
+      const side = (t, pts, s, won, lost) => `
         <div class="mu-side ${won ? 'won' : ''} ${lost ? 'lost' : ''}">
           <img src="${esc(mgr(t.ownerId).avatar)}" alt="" loading="lazy"
             onerror="this.style.visibility='hidden'">
           <div class="mu-who">
             <div class="mu-name">${mgrLink(t.ownerId)}</div>
             <div class="mu-team">${esc(t.teamName)}</div>
-            ${pct == null ? '' : `<div class="mu-odds ${pct > 50 ? 'fav' : pct < 50 ? 'dog' : 'even'}">
-              <div class="mu-odds-bar"><div class="mu-odds-fill" style="width:${pct}%"></div></div>
-              <span class="mu-odds-n">${pct}%</span>
-            </div>`}
           </div>
           <div class="mu-val">
             ${p.played ? `<div class="mu-pts">${n2(pts)}</div>`
               : `<div class="mu-rec">${wl(t)}</div>`}
-            ${showOdds && !settled ? `<div class="mu-proj">proj ${n1(sd.expected)}</div>` : ''}
+            ${s.hasProjection && s.remaining > 0 ? `<div class="mu-proj">proj ${n1(s.expected)}</div>` : ''}
           </div>
         </div>`;
       const aw = p.played && p.ap > p.bp, bw = p.played && p.bp > p.ap;
 
       return `<div class="mu">
-        ${side(ta, p.ap, sa, aw, bw, pa)}
+        ${side(ta, p.ap, sa, aw, bw)}
         <div class="mu-split"><span>vs</span></div>
-        ${side(tb, p.bp, sb, bw, aw, pb)}
+        ${side(tb, p.bp, sb, bw, aw)}
       </div>`;
     }).join('');
 
@@ -186,12 +170,10 @@ views.home = async () => {
       <h3 class="section-title">Week ${wk} Matchups</h3>
       <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
         ${anyPlayed
-          ? 'Scores and odds refresh every time you load the page.'
-          : 'Records shown until kickoff &mdash; scores land here once the games start.'}
-        Each manager&rsquo;s bar is their chance to win that matchup &mdash; from
-        Sleeper&rsquo;s projections for whoever is left to play, spread by how swingy
-        this league actually is (&plusmn;${n1(MODEL.scoreSD)} points a week across
-        ${MODEL.totals.games.toLocaleString()} games).</p>
+          ? 'Scores refresh every time you load the page.'
+          : 'Records show until kickoff. Scores land here once the games start.'}
+        Proj is Sleeper's own projection for whoever hasn't played yet, added to
+        what's already on the board. Nothing added on top of it.</p>
       <div class="grid g3 matchups">${cards}</div>`;
     }
   }
@@ -247,7 +229,7 @@ views.home = async () => {
             <img src="${esc(mgr(bountyNow.ownerId).avatar)}" alt="" loading="lazy"
               onerror="this.style.visibility='hidden'">
             <div>
-              <div class="stat-label">${bountyNow.settled ? `Week ${bountyNow.week} Winner` : `Week ${bountyNow.week} &mdash; Leading So Far`}</div>
+              <div class="stat-label">${bountyNow.settled ? `Week ${bountyNow.week} Winner` : `Week ${bountyNow.week}: Leading So Far`}</div>
               <div class="stat-value gold">${esc(mgr(bountyNow.ownerId).name)}</div>
               <div class="stat-meta">${n1(bountyNow.pts)} points ${bountyNow.settled
                 ? `&middot; won $${wh.amount}`
@@ -303,12 +285,12 @@ views.home = async () => {
         </div>` : '';
 
     liveBlock = `
-      <h3 class="section-title">${esc(live.season)} Season &mdash; In Progress</h3>
+      <h3 class="section-title">${esc(live.season)} Season &middot; In Progress</h3>
       <div class="grid ${resultsPanel ? 'g2' : ''}">
         <div>
           <div class="small muted" style="margin-bottom:8px">${lastPlayed
             ? `Playoff picture (top ${live.playoffTeams} make it)`
-            : 'Standings &mdash; nobody has played a game yet'}</div>
+            : 'Nobody has played a game yet'}</div>
           ${table(['#', 'Manager', { label: 'Record', num: 1 }, { label: 'PF', num: 1 }, ''], bubble)}
         </div>${resultsPanel}
       </div>`;
@@ -345,7 +327,7 @@ views.home = async () => {
 
   ${upcoming ? `<div class="notice"><strong>${esc(upcoming.season)} season:</strong>
       ${upcoming.status === 'pre_draft'
-        ? (upcoming.draftStart ? 'the draft is scheduled — countdown above.' : 'the draft hasn\'t been scheduled yet.')
+        ? (upcoming.draftStart ? 'the draft is on the calendar, countdown above.' : 'the draft hasn\'t been scheduled yet.')
         : 'getting started.'}
       ${last ? `Everything below covers ${esc(MODEL.completedSeasons[0].season)}&ndash;${esc(last.season)}.` : ''}
       This page fills in on its own once games are played.</div>` : ''}
@@ -385,7 +367,7 @@ views.home = async () => {
     { label: 'Win %', num: 1 }, { label: 'Adj %', num: 1 },
     { label: 'PPG', num: 1 }, { label: 'Titles', num: 1 }], leaders)}
   <p class="small muted" style="margin-top:10px">
-    Ranked by <strong>adjusted win %</strong> &mdash; each record is regressed toward .500 by
+    Ranked by <strong>adjusted win %</strong>, which regresses each record toward .500 by
     ${MODEL.regressGames} games, so a short career has to earn its place instead of riding a
     hot half-season. <a href="#/managers">See every manager &rarr;</a></p>
 
@@ -932,7 +914,7 @@ views.managers = params => {
 
   const rows = list.map((m, i) => `<tr>
     <td class="rank">${i + 1}</td>
-    <td ${m.orphanKey ? `title="Left the league — override key ${esc(m.orphanKey)}"` : ''}>
+    <td ${m.orphanKey ? `title="Left the league (override key ${esc(m.orphanKey)})"` : ''}>
       ${mgrCell(m.id, m.teamNames[m.teamNames.length - 1])}</td>
     <td class="num">${m.seasons.length}${m.rookie ?
       ` <span class="pill pill-dim" title="First season was ${esc(m.firstSeason)}">rookie</span>` : ''}</td>
@@ -982,7 +964,7 @@ views.managers = params => {
     { label: 'Playoffs', num: 1 }, { label: 'Titles', num: 1 }], rows)}
 
   <div class="notice" style="margin-top:16px">
-    <strong>Why two win percentages?</strong> Raw win % rewards small samples &mdash; a manager
+    <strong>Why two win percentages?</strong> Raw win % rewards small samples. A manager
     with one good season can sit above someone with four solid ones. <strong>Adjusted win %</strong>
     regresses every record toward .500 by ${MODEL.regressGames} games (about one season). Play more,
     and your adjusted number converges on your real one; play a little, and it stays near the middle.
@@ -1175,8 +1157,8 @@ views.manager = async params => {
     movesBlock = `
       <h3 class="section-title">Moves This Season</h3>
       <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
-        Every trade, waiver claim and free-agent pickup in ${esc(liveS.season)}
-        &mdash; ${mine.length} so far. Green is in, red is out.</p>
+        Every trade, waiver claim and free-agent pickup in ${esc(liveS.season)},
+        ${mine.length} so far. Green is in, red is out.</p>
       ${table(['When', 'Type', 'Players'], moveRows)}`;
   }
 
@@ -1230,7 +1212,7 @@ views.manager = async params => {
         ? 'shared with ' + r.owners.filter(o => o !== m.id).map(o => esc(mgr(o).name)).join(', ')
         : 'sole holder'}</div>
       </div>`).join('')}</div>`
-      : `<div class="empty" style="padding:26px">No league records held &mdash; yet.
+      : `<div class="empty" style="padding:26px">No league records held yet.
         The <a href="#/records">record book</a> shows what's up for grabs.</div>`}
 
   ${formChart ? `<h3 class="section-title">Career Form</h3>${formChart}
@@ -1267,7 +1249,7 @@ views.manager = async params => {
       return `<h3 class="section-title">Winnings</h3>
         ${table(['Season', 'Prize', { label: 'Amount', num: 1 }], awards)}
         <p class="small muted" style="margin-top:10px">
-          ${money0(row.total)} won against ${money0(row.buyIns)} in buy-ins &mdash;
+          ${money0(row.total)} won against ${money0(row.buyIns)} in buy-ins, for
           <strong style="color:${row.net > 0 ? 'var(--green)' : 'var(--red)'}">
           ${row.net > 0 ? '+' : ''}${money0(row.net)}</strong> lifetime.
           <a href="#/money">Full ledger &rarr;</a></p>`;
@@ -1403,7 +1385,7 @@ views.draft = params => {
       </table>
     </div>
     <p class="small muted" style="margin-top:10px">
-      Snake order &mdash; odd rounds run left to right, even rounds right to left.
+      Snake order: odd rounds run left to right, even rounds right to left.
       Scroll sideways for the rest of the league; the round column stays put.</p>`
     : `<div class="grid g3 dmgrs">${cards}</div>`}
 
@@ -1618,7 +1600,7 @@ views.money = () => {
       <div class="small muted" style="margin-top:12px">Weekly winners</div>
       <div class="chip-row" style="margin-top:6px">
         ${whAwards.slice().sort((a, b) => a.week - b.week).map(a =>
-      `<span class="chip" style="cursor:default">Wk ${a.week} &mdash;
+      `<span class="chip" style="cursor:default">Wk ${a.week}
           ${mgrLink(a.ownerId)} <span class="muted">${n1(a.pts)}</span></span>`).join('')}
       </div>` : '';
 
@@ -1687,7 +1669,7 @@ views.money = () => {
 
   ${M.unbalanced.length ? `<div class="notice">
     <strong>Heads up:</strong> ${M.unbalanced.map(s => esc(s.season)).join(', ')}
-    ${M.unbalanced.length === 1 ? "doesn't" : "don't"} balance &mdash; the prize structure and the
+    ${M.unbalanced.length === 1 ? "doesn't" : "don't"} balance. The prize structure and the
     money collected disagree. Fix the buy-in or the prizes in
     <code>assets/payouts.js</code>.</div>` : ''}`;
 };

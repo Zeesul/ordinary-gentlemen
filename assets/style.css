@@ -311,26 +311,6 @@ td.none{color:#3b4757}
 }
 .mu-split::before,.mu-split::after{content:"";flex:1;height:1px;background:var(--line-soft)}
 
-/* Win chance sits on the manager's own row, under their name, because the card
-   stacks the two of them vertically. Green favourite, red underdog — the colour
-   answers "am I winning this" before the number is even read. */
-.mu-odds{display:flex;align-items:center;gap:8px;margin-top:7px}
-.mu-odds-bar{
-  flex:1;min-width:40px;height:4px;border-radius:2px;
-  background:var(--line);overflow:hidden;
-}
-.mu-odds-fill{height:100%;border-radius:2px;transition:width .3s ease}
-.mu-odds-n{
-  font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;
-  min-width:32px;text-align:right;
-}
-.mu-odds.fav .mu-odds-fill{background:var(--green)}
-.mu-odds.fav .mu-odds-n{color:var(--green)}
-.mu-odds.dog .mu-odds-fill{background:var(--red)}
-.mu-odds.dog .mu-odds-n{color:var(--ink-2)}
-.mu-odds.even .mu-odds-fill{background:var(--ink-3)}
-.mu-odds.even .mu-odds-n{color:var(--ink-2)}
-
 /* ------------------------------ weekly bounty ------------------ */
 .bounty-panel{
   background:linear-gradient(135deg,rgba(212,175,55,.10),var(--panel) 60%);
@@ -715,7 +695,8 @@ summary::marker{color:var(--ink-3)}
   .brand-crest{width:44px;height:44px}
   .page-title{font-size:29px}
   .hero h2{font-size:26px}
-  .g2,.g3,.g4{grid-template-columns:1fr}
+  .g2,.g3{grid-template-columns:1fr}
+  .g4{grid-template-columns:repeat(2,1fr)}
   /* comfortable thumb targets */
   .chip{padding:8px 15px}
   .toggle{padding:4px 0}

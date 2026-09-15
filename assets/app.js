@@ -182,7 +182,7 @@ function wirePage(route) {
       if (diff <= 0) {
         clearInterval(wirePage._countdown);
         $('.draft-timer', cd).innerHTML =
-          '<div class="dt-live">It\'s draft day — good luck, gentlemen.</div>';
+          '<div class="dt-live">It\'s draft day. Good luck, gentlemen.</div>';
         return;
       }
       nums.d.textContent = Math.floor(diff / 86400);

@@ -338,17 +338,6 @@ function buildModel(raw) {
     return list;
   })();
 
-  /* ---------------- scoring spread --------------------------------------
-     Standard deviation of a single team-week across every game this league
-     has ever played. The win-probability model leans on this rather than a
-     made-up constant, so it reflects how swingy THIS league actually is. */
-  const allPts = weekly.map(w => w.pts);
-  const meanPts = allPts.length ? allPts.reduce((a, b) => a + b, 0) / allPts.length : 0;
-  const scoreSD = allPts.length > 1
-    ? Math.sqrt(allPts.reduce((a, b) => a + (b - meanPts) * (b - meanPts), 0) /
-      (allPts.length - 1))
-    : 25;
-
   /* ---------------- money ---------------------------------------------- */
   const money = computeMoney(seasons, managers, crownList);
   managerList.forEach(m => {
@@ -362,7 +351,7 @@ function buildModel(raw) {
   return {
     fetchedAt: raw.fetchedAt,
     leagueName: raw.leagueName,
-    seasons, money, nflState, currentWeek, scoreSD, meanPts,
+    seasons, money, nflState, currentWeek,
     completedSeasons: seasons.filter(s => s.complete),
     liveSeason,
     currentSeason: seasons[seasons.length - 1],
@@ -483,37 +472,23 @@ function computeMoney(seasons, managers, crownList) {
 }
 
 /* ------------------------------------------------------------------
-   Win probability
+   Projected score
 
-   A matchup is modelled as a normal distribution around each side's
-   expected final score. Starters who have already played contribute
-   their real points and no uncertainty; everyone still to play
-   contributes their projection and their share of the variance. So the
-   number starts near a coin flip on Tuesday and hardens into a result
-   as Sunday plays out.
+   Starters who have already played contribute their real points.
+   Everyone still to play contributes Sleeper's own projection for
+   them and nothing else. No model sits on top of Sleeper's numbers.
    ------------------------------------------------------------------ */
 
-/** Normal CDF — Abramowitz & Stegun 7.1.26, plenty accurate here. */
-function normCdf(z) {
-  const sign = z < 0 ? -1 : 1;
-  const x = Math.abs(z) / Math.SQRT2;
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
-    a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-  const t = 1 / (1 + p * x);
-  const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return 0.5 * (1 + sign * y);
-}
-
 /**
- * Expected final score for one side of a matchup.
+ * Projected final score for one side of a matchup, built only from
+ * Sleeper's own per-player projections.
  * @param {string[]} starters      roster's starting player ids
  * @param {number[]} startersPoints points already scored, parallel to starters
  * @param {object}   proj          player id -> projection record
- * @param {number}   sd            league-wide weekly scoring SD
  * @param {string}   today         YYYY-MM-DD, local
  */
-function projectSide(starters, startersPoints, proj, sd, today) {
-  let expected = 0, remaining = 0, totalProj = 0, played = 0, live = 0;
+function projectSide(starters, startersPoints, proj, today) {
+  let expected = 0, remaining = 0, totalProj = 0;
   (starters || []).forEach((pid, i) => {
     if (!pid || pid === '0') return;                 // empty lineup slot
     const info = proj ? proj[pid] : null;
@@ -523,26 +498,10 @@ function projectSide(starters, startersPoints, proj, sd, today) {
     // Someone whose game day has passed is finished even if he scored nothing;
     // otherwise any points on the board mean he has started.
     const isDone = actual > 0 || (info && info.date && info.date < today);
-    if (isDone) { expected += actual; played++; }
-    else { expected += p; remaining += p; live++; }
+    if (isDone) expected += actual;
+    else { expected += p; remaining += p; }
   });
-  // Variance scales with how much of the lineup is still to come.
-  const frac = totalProj > 0 ? Math.min(1, remaining / totalProj) : (played ? 0 : 1);
-  return {
-    expected, remaining, played, live,
-    sd: sd * Math.sqrt(frac),
-    hasProjection: totalProj > 0
-  };
-}
-
-/** Probability that side A finishes ahead of side B. */
-function winProbability(a, b) {
-  const sd = Math.sqrt(a.sd * a.sd + b.sd * b.sd);
-  if (sd < 0.5) {                                     // nothing left to play
-    if (a.expected === b.expected) return 0.5;
-    return a.expected > b.expected ? 1 : 0;
-  }
-  return normCdf((a.expected - b.expected) / sd);
+  return { expected, remaining, hasProjection: totalProj > 0 };
 }
 
 /* ------------------------------------------------------------------

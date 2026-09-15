@@ -479,10 +479,10 @@ async function loadProjections(season, week) {
   } catch (_) { /* projections are a bonus, never fatal */ }
   if (!Array.isArray(raw)) {
     // Ad/privacy blockers sometimes eat this request (it is not under /v1 and
-    // looks like a tracking endpoint). Say so — silently dropping the win bar
+    // looks like a tracking endpoint). Say so — silently dropping the projections
     // looks like a bug in the site.
-    console.warn('[projections] could not load week ' + week + ' — win probability ' +
-      'and roster projections will be hidden. An ad blocker may be blocking ' +
+    console.warn('[projections] could not load week ' + week + ' — matchup ' +
+      'projections will be hidden. An ad blocker may be blocking ' +
       CONFIG.projApi + '/projections/…');
     return {};
   }
@@ -584,7 +584,7 @@ function cacheShapeOK(hit) {
     // roster arrays power the manager profile's roster panel
     if (s.teams.some(t => !Array.isArray(t.players) || !Array.isArray(t.starters))) return false;
     if (!s.pairings || typeof s.pairings !== 'object') return false;
-    // a live season also needs per-week lineups for win probability
+    // a live season also needs per-week lineups for matchup projections
     if (s.inProgress && (!s.lineups || typeof s.lineups !== 'object')) return false;
     return true;
   });
