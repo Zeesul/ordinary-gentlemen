@@ -196,6 +196,75 @@ views.home = async () => {
     }
   }
 
+  // --- weekly $25 bounty --------------------------------------------
+  /* Deliberately independent of `finalGames` / `crownList`: those wait for
+     Sleeper's nflState.week to roll over, which can lag a real day or more
+     after Monday night ends (see the money-page weekly-winner data, which
+     is built from crownList and inherits that lag). `live.games` only ever
+     holds pairings with real points on the board, so it reflects a finished
+     week immediately. The most recent week is always labelled "so far"
+     rather than "winner" -- harmless if it's genuinely still live, and it
+     quietly relabels itself "winner" on its own once the week is behind us. */
+  let bountyBlock = '';
+  if (live) {
+    const whCfg = (typeof PAYOUTS !== 'undefined' && PAYOUTS[live.season]) || null;
+    const wh = whCfg && whCfg.weeklyHigh;
+    if (wh) {
+      const lastBountyWeek = Math.min(MODEL.currentWeek || wh.from, wh.to);
+      const bountyWeeks = [];
+      for (let w = wh.from; w <= lastBountyWeek; w++) {
+        const rows = [];
+        live.games.filter(g => g.week === w).forEach(g => {
+          rows.push({ rosterId: g.a, pts: g.ap }, { rosterId: g.b, pts: g.bp });
+        });
+        if (!rows.length) continue;
+        const top = rows.slice().sort((a, b) => b.pts - a.pts)[0];
+        const team = live.byRoster[top.rosterId];
+        if (!team || !(top.pts > 0)) continue;
+        bountyWeeks.push({ week: w, ownerId: team.ownerId, pts: top.pts, settled: w < MODEL.currentWeek });
+      }
+
+      if (bountyWeeks.length) {
+        const bountyNow = bountyWeeks[bountyWeeks.length - 1];
+        const bountyTotalWeeks = wh.to - wh.from + 1;
+        const bountySettled = bountyWeeks.filter(x => x.settled);
+        const bountyPaid = bountySettled.length * wh.amount;
+        const bountyTally = {};
+        bountySettled.forEach(x => { bountyTally[x.ownerId] = (bountyTally[x.ownerId] || 0) + 1; });
+        const bountyTallyMax = Object.values(bountyTally).reduce((a, b) => Math.max(a, b), 0);
+        const bountyLeaders = Object.keys(bountyTally).filter(id => bountyTally[id] === bountyTallyMax);
+
+        const bountyChips = bountyWeeks.map(x => `
+          <span class="chip bounty-chip ${x.settled ? '' : 'pending'}" style="cursor:default">
+            <span class="bounty-wk">Wk ${x.week}</span>${mgrLink(x.ownerId)}
+            <span class="muted">${n1(x.pts)}</span>
+          </span>`).join('');
+
+        bountyBlock = `
+        <h3 class="section-title">$${wh.amount} Weekly High Score</h3>
+        <div class="panel bounty-panel">
+          <div class="bounty-lead">
+            <img src="${esc(mgr(bountyNow.ownerId).avatar)}" alt="" loading="lazy"
+              onerror="this.style.visibility='hidden'">
+            <div>
+              <div class="stat-label">${bountyNow.settled ? `Week ${bountyNow.week} Winner` : `Week ${bountyNow.week} &mdash; Leading So Far`}</div>
+              <div class="stat-value gold">${esc(mgr(bountyNow.ownerId).name)}</div>
+              <div class="stat-meta">${n1(bountyNow.pts)} points ${bountyNow.settled
+                ? `&middot; won $${wh.amount}`
+                : `&middot; $${wh.amount} on the line`}</div>
+            </div>
+          </div>
+          <div class="chip-row">${bountyChips}</div>
+          <p class="small muted" style="margin-top:14px">
+            ${money0(bountyPaid)} paid out across ${bountySettled.length} of ${bountyTotalWeeks} weeks this season${
+              bountyTallyMax > 1 ? ` &middot; ${bountyLeaders.map(id => mgrLink(id)).join(', ')}
+              lead${bountyLeaders.length === 1 ? 's' : ''} with ${bountyTallyMax} bounties` : ''}.
+            <a href="#/money">Full breakdown &rarr;</a></p>
+        </div>`;
+      }
+    }
+  }
+
   // --- live season block -------------------------------------------
   let liveBlock = '';
   if (live) {
@@ -306,6 +375,8 @@ views.home = async () => {
   </div>
 
   ${weekBlock}
+
+  ${bountyBlock}
 
   ${liveBlock}
 

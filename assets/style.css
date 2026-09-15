@@ -331,6 +331,25 @@ td.none{color:#3b4757}
 .mu-odds.even .mu-odds-fill{background:var(--ink-3)}
 .mu-odds.even .mu-odds-n{color:var(--ink-2)}
 
+/* ------------------------------ weekly bounty ------------------ */
+.bounty-panel{
+  background:linear-gradient(135deg,rgba(212,175,55,.10),var(--panel) 60%);
+  border:1px solid rgba(212,175,55,.32);
+}
+.bounty-lead{display:flex;align-items:center;gap:16px;margin-bottom:16px}
+.bounty-lead img{
+  width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none;
+  background:var(--panel-2);border:2px solid var(--gold);
+}
+.bounty-chip{display:inline-flex;align-items:center;gap:7px}
+.bounty-wk{color:var(--ink-3);font-size:11px;letter-spacing:.6px}
+.chip.pending{border-style:dashed;color:var(--ink-2)}
+.chip.pending .bounty-wk{color:var(--gold-soft)}
+@media (max-width:680px){
+  .bounty-lead{gap:12px}
+  .bounty-lead img{width:46px;height:46px}
+}
+
 /* ------------------------------ roster + moves ---------------- */
 table.roster td.slot{
   color:var(--ink-3);font-size:10px;letter-spacing:1.3px;text-transform:uppercase;
