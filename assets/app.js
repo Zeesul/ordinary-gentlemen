@@ -33,6 +33,16 @@ function markNav(route) {
 function wirePage(route) {
   const host = $('#view');
 
+  // homepage week chips (browse past weeks without leaving Home)
+  const weekChips = $('#homeWeekChips', host);
+  if (weekChips) {
+    weekChips.addEventListener('click', e => {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      setHash('home', { week: btn.dataset.week });
+    });
+  }
+
   // season chips (standings, playoffs, draft, trades)
   const chips = $('#seasonChips', host);
   if (chips) {

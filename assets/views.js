@@ -84,7 +84,7 @@ function medal(row) {
 const views = {};
 
 /* ============================== HOME ============================== */
-views.home = async () => {
+views.home = async params => {
   const last = MODEL.completedSeasons[MODEL.completedSeasons.length - 1];
   const champTeam = last && last.byRoster[last.championRoster];
   const champ = champTeam ? mgr(champTeam.ownerId) : null;
@@ -122,13 +122,23 @@ views.home = async () => {
 
   // --- this week's matchups ------------------------------------------
   /* Built from `pairings`, not `games`, so the card is there before kickoff.
-     Scores replace records the moment a matchup has points on the board. */
+     Scores replace records the moment a matchup has points on the board.
+     A week chip row lets you flip back through weeks already played,
+     without leaving the homepage. `pairings` holds the whole season's
+     schedule up front, so it's capped at `currentWeek` here. */
   let weekBlock = '';
   if (live && MODEL.currentWeek) {
-    const wk = MODEL.currentWeek;
+    const pastWeeks = Object.keys(live.pairings || {}).map(Number)
+      .filter(w => w <= MODEL.currentWeek && (live.pairings[w] || []).length)
+      .sort((a, b) => a - b);
+    const wk = params.week && pastWeeks.includes(Number(params.week))
+      ? Number(params.week) : MODEL.currentWeek;
+    const isCurrent = wk === MODEL.currentWeek;
     const pairs = (live.pairings && live.pairings[wk]) || [];
     const anyPlayed = pairs.some(p => p.played);
-    const proj = pairs.length ? await loadProjections(live.season, wk) : {};
+    // Only the live week can still have someone left to play, so that's the
+    // only week worth fetching a projection for.
+    const proj = isCurrent && pairs.length ? await loadProjections(live.season, wk) : {};
     const lineups = (live.lineups && live.lineups[wk]) || {};
     const today = todayISO();
 
@@ -166,14 +176,22 @@ views.home = async () => {
     }).join('');
 
     if (cards) {
+      const weekChips = pastWeeks.length > 1 ? `
+      <div class="chip-row" id="homeWeekChips" style="margin-bottom:10px">
+        ${pastWeeks.map(w => `<button class="chip ${w === wk ? 'active' : ''}"
+          data-week="${w}">Wk ${w}</button>`).join('')}
+      </div>` : '';
       weekBlock = `
       <h3 class="section-title">Week ${wk} Matchups</h3>
+      ${weekChips}
       <p class="small muted" style="margin-top:-6px;margin-bottom:14px">
-        ${anyPlayed
-          ? 'Scores refresh every time you load the page.'
-          : 'Records show until kickoff. Scores land here once the games start.'}
-        Proj is Sleeper's own projection for whoever hasn't played yet, added to
-        what's already on the board. Nothing added on top of it.</p>
+        ${isCurrent
+          ? (anyPlayed
+              ? `Scores refresh every time you load the page. Proj is Sleeper's own
+                 projection for whoever hasn't played yet, added to what's already
+                 on the board. Nothing added on top of it.`
+              : 'Records show until kickoff. Scores land here once the games start.')
+          : `Final scores from Week ${wk}.`}</p>
       <div class="grid g3 matchups">${cards}</div>`;
     }
   }
@@ -829,7 +847,7 @@ views.records = params => {
       <td class="num">${m.worstWeek ? n2(m.worstWeek.pts) : '&mdash;'}</td>
       <td class="num">${m.blowoutLosses}</td>
       <td class="num">${m.closeLosses}</td>
-      <td class="num">${m.seasons.length - m.playoffs}</td>
+      <td class="num">${m.fullSeasons - m.playoffs}</td>
     </tr>`);
 
   return `
