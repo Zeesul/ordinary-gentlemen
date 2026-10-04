@@ -6,10 +6,11 @@
 const CONFIG = {
   leagueId: '1353221128079839232',
   api: 'https://api.sleeper.app/v1',
-  cacheKey: 'log_site_data_v7',
+  cacheKey: 'log_site_data_v8',
   playerKey: 'log_players_v1',
   txnKey: 'log_txn_v1_',
   projKey: 'log_proj_v1_',
+  ptsKey: 'log_ppts_v1_',
   projApi: 'https://api.sleeper.app',
   projCacheMins: 60,
   cacheHours: 3,
@@ -385,6 +386,7 @@ async function loadSeason(lg) {
     draftId: d0 ? d0.draft_id : null,
     draftStatus: d0 ? d0.status : null,
     playoffStart,
+    playoffRoundType: st.playoff_round_type || 0,
     playoffsUnderway,
     rosterPositions: Array.isArray(lg.roster_positions) ? lg.roster_positions : [],
     playoffTeams: st.playoff_teams || 6,
@@ -526,8 +528,16 @@ async function loadProjections(season, week) {
     };
   });
   PROJ_MEMO[memoKey] = map;
-  try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), p: map })); }
-  catch (_) { /* over quota — the in-memory copy still serves this visit */ }
+  // Each week's projections are ~290KB. Only the week being viewed is ever
+  // reused, so drop every older week before saving this one. Without this a
+  // season's worth piles up past the browser's ~5MB limit, and from then on
+  // the main data cache silently fails to save and every visit refetches.
+  try {
+    Object.keys(localStorage).forEach(k => {
+      if (k.indexOf(CONFIG.projKey) === 0 && k !== key) localStorage.removeItem(k);
+    });
+    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), p: map }));
+  } catch (_) { /* over quota — the in-memory copy still serves this visit */ }
   return map;
 }
 
@@ -547,7 +557,9 @@ async function loadTransactions(season) {
   const key = CONFIG.txnKey + season.leagueId;
   try {
     const hit = JSON.parse(localStorage.getItem(key) || 'null');
-    if (hit && hit.ts && (season.complete || Date.now() - hit.ts < 6 * 3600e3)) return hit.t;
+    // A finished season never changes. A live one is re-pulled every half
+    // hour so a trade made this afternoon shows up in Recent Activity today.
+    if (hit && hit.ts && (season.complete || Date.now() - hit.ts < 30 * 60e3)) return hit.t;
   } catch (_) { /* ignore */ }
 
   const weeks = range(1, Math.max(season.lastLeg, 17));
@@ -578,6 +590,52 @@ async function loadTransactions(season) {
   try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), t: all })); }
   catch (_) { /* ignore */ }
   return all;
+}
+
+/* ------------------------------------------------------------------
+   Per-player weekly points — on demand, for trade grades.
+
+   The main load keeps team scores only. Grading a trade needs to know
+   what each traded player scored, week by week, and for which roster, so
+   this pulls every week's matchups once and keeps just
+   { week: { rosterId: { playerId: points } } }. Only finished seasons are
+   graded, and a finished season never changes, so it's cached for good.
+   ------------------------------------------------------------------ */
+const PTS_MEMO = {};
+
+async function loadPlayerWeeks(season) {
+  if (PTS_MEMO[season.leagueId]) return PTS_MEMO[season.leagueId];
+  const key = CONFIG.ptsKey + season.leagueId;
+  try {
+    const hit = JSON.parse(localStorage.getItem(key) || 'null');
+    if (hit && hit.w) { PTS_MEMO[season.leagueId] = hit.w; return hit.w; }
+  } catch (_) { /* ignore */ }
+
+  const weeks = range(1, season.lastLeg);
+  const chunks = await pool(weeks, CONFIG.concurrency, w =>
+    getJSON(`/league/${season.leagueId}/matchups/${w}`).catch(() => null));
+  const out = {};
+  let failed = false;
+  chunks.forEach((data, i) => {
+    if (!Array.isArray(data)) { failed = true; return; }
+    const wk = {};
+    data.forEach(m => {
+      const pts = {};
+      Object.keys(m.players_points || {}).forEach(pid => {
+        pts[pid] = Math.round((m.players_points[pid] || 0) * 100) / 100;
+      });
+      wk[m.roster_id] = pts;
+    });
+    out[weeks[i]] = wk;
+  });
+  PTS_MEMO[season.leagueId] = out;
+  // Never cache a partial pull: a missing week would quietly zero out
+  // whoever was traded that week, for good.
+  if (!failed && season.complete) {
+    try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), w: out })); }
+    catch (_) { /* over quota — refetched next visit */ }
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------
@@ -625,6 +683,10 @@ function writeCache(raw) {
         byRoster: undefined, standings: undefined
       }))
     };
+    // Older builds' copies are dead weight once the key is bumped.
+    Object.keys(localStorage).forEach(k => {
+      if (k.indexOf('log_site_data_') === 0 && k !== CONFIG.cacheKey) localStorage.removeItem(k);
+    });
     localStorage.setItem(CONFIG.cacheKey, JSON.stringify(slim));
   } catch (_) { /* quota or private mode — not fatal */ }
 }

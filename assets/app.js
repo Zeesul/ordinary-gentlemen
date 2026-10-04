@@ -249,8 +249,14 @@ async function render() {
     ? MODEL.managers[params.id].name : TITLES[route];
   document.title = extra ? `${extra} | ${base}` : base;
 
-  // keep the reader in place when they're only changing a filter
-  if (!params.a && !params.mgr && !params.sort && !params.chart) window.scrollTo(0, 0);
+  // Keep the reader in place when they're only changing a filter on the
+  // same page. Arriving from another page always starts at the top, except
+  // a link straight to one rivalry, which lands on that matchup.
+  const samePage = route === render._lastRoute;
+  render._lastRoute = route;
+  const detail = route === 'h2h' && params.a && $('#h2hDetail', host);
+  if (!samePage && detail) detail.scrollIntoView({ block: 'start' });
+  else if (!samePage || (!params.a && !params.mgr && !params.sort && !params.chart)) window.scrollTo(0, 0);
 }
 
 /* ------------------------------ startup --------------------------- */

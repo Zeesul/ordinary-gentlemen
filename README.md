@@ -18,11 +18,11 @@ re-upload data.
 | Standings | Final standings for any season, an interactive season race chart, and every week's scores |
 | Playoffs | Real brackets with scores and seeds, championship and consolation sides |
 | Champions | Trophy room, plus hardware counts for everyone |
-| Head to Head | All-time grid; click any cell for every meeting between those two |
+| Head to Head | All-time grid, playoff games included; click any cell for every meeting between those two |
 | Record Book | Highs, lows, blowouts, nail-biters, weekly crowns, Hall of Shame — filterable by manager and season |
 | Managers | Career table with sorting; click a name for a full profile and career-form chart |
 | Draft | Every draft board, first-round highlights, and keepers |
-| Trades | Trade ledger with players/FAAB/picks, biggest waiver bids, and activity per manager |
+| Trades | Trade ledger with players/FAAB/picks and grades for finished seasons, an all-time trade report card, biggest waiver bids, and activity per manager |
 | Money | Career winnings, buy-ins and net profit for everyone, plus each season's prize structure |
 
 ## Files
@@ -257,6 +257,23 @@ home page requires at least two completed seasons.
 
 Those two numbers are set by `MIN_SEASONS` and `REGRESS` at the top of `buildModel()` in
 `assets/model.js` if you ever want to tune them.
+
+### Playoff games in career records
+
+Career records, win percentages and head-to-head include playoff games. Sleeper's matchup
+data doesn't mark which games were playoffs, so they're rebuilt from the championship
+bracket: each decided match, scored from its round's week. Consolation-bracket games don't
+count. Points-for, PPG and the Record Book stay regular season.
+
+### Trade grades
+
+Only finished seasons are graded. Each player a team received is followed from the trade
+until he leaves that roster, earning points above a replacement-level player at his
+position each week (never below zero). A player flipped in a later trade also carries his
+share of what that trade brought back. A side's grade is its value minus the other side's,
+mapped to a letter by `TRADE_GRADE_BANDS` in `assets/model.js`. Per-player weekly points are
+pulled on demand the first time someone opens the Trades page and cached for good, since a
+finished season never changes.
 
 Results are cached in your browser for 3 hours so repeat visits load instantly. The
 **Force refresh data** link in the footer clears that cache.

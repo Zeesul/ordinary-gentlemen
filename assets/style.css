@@ -634,14 +634,36 @@ table.dboard th,table.dboard td{padding:0;border:0;vertical-align:top}
 .trade-list{display:flex;flex-direction:column;gap:12px}
 .trade{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
 .trade-head{
-  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  display:flex;justify-content:flex-start;align-items:center;gap:10px;flex-wrap:wrap;
   padding:9px 15px;background:var(--panel-2);border-bottom:1px solid var(--line);
 }
 .trade-body{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
 .trade-side{flex:1 1 260px;padding:14px 16px;min-width:0}
 .trade-side + .trade-side{border-left:1px solid var(--line-soft)}
 .trade-arrow{display:flex;align-items:center;color:var(--ink-3);font-size:19px;padding:0 4px}
-.trade-mgr{margin-bottom:9px}
+.trade-mgr{margin-bottom:9px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.trade-mgr > .mgr-link, .trade-mgr > .mgr{min-width:0}
+.trade-verdict{margin-left:auto}
+.trade-val{color:var(--ink-2);letter-spacing:.5px;text-transform:none;font-weight:600;margin-left:6px}
+.trade-after{display:block;color:var(--ink-2);font-size:12px;margin-top:1px}
+
+/* trade grades: a letter in a rounded square, coloured by tier */
+.grade{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  min-width:30px;height:26px;padding:0 6px;border-radius:7px;
+  font-family:"Barlow Condensed",Inter,sans-serif;font-weight:700;font-size:17px;line-height:1;
+  border:1px solid transparent;vertical-align:middle;
+}
+.grade-lg{min-width:44px;height:38px;font-size:25px;border-radius:9px}
+.grade.ga{background:rgba(53,196,138,.16);color:#5fd9a6;border-color:rgba(53,196,138,.4)}
+.grade.gb{background:rgba(90,169,230,.15);color:#8cc3ef;border-color:rgba(90,169,230,.38)}
+.grade.gc{background:rgba(120,140,165,.12);color:var(--ink-2);border-color:var(--line)}
+.grade.gd{background:rgba(240,145,62,.15);color:#f3ad6e;border-color:rgba(240,145,62,.38)}
+.grade.gf{background:rgba(229,97,95,.17);color:#f0918f;border-color:rgba(229,97,95,.42)}
+
+/* playoff games in head-to-head */
+.po-mark{color:var(--gold);font-size:9px;font-weight:700;margin-left:2px;vertical-align:super}
+.row-playoff{background:rgba(212,175,55,.05)}
 .trade-label{color:var(--ink-3);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;margin-bottom:6px}
 .trade-items{list-style:none;margin:0;padding:0}
 .trade-items li{padding:4px 0;font-size:13.5px;border-bottom:1px solid var(--line-soft)}
@@ -668,6 +690,9 @@ table.dboard th,table.dboard td{padding:0;border:0;vertical-align:top}
   .activity-list{padding:4px 14px}
   .activity-when{display:block;margin-left:38px;margin-top:2px}
   .activity-item{flex-wrap:wrap}
+  /* stacked trade sides: the swap arrow sits between them, not beside one */
+  .trade-arrow{flex:1 0 100%;justify-content:center;padding:0;line-height:1;margin:-4px 0;transform:rotate(90deg)}
+  .trade-side + .trade-arrow + .trade-side, .trade-side + .trade-side{border-left:none;border-top:1px solid var(--line-soft)}
 }
 
 /* ------------------------------ player faces ------------------ */

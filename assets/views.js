@@ -219,13 +219,19 @@ views.home = async params => {
      treatment. Skipped entirely off-season or before anyone's made a move. */
   let activityBlock = '';
   if (live) {
-    await loadPlayers();
     const txns = (await loadTransactions(live)).slice(0, 6);
+    // Names come from this week's projections (already loaded for the
+    // matchup cards) when they cover everyone. Only fall back to Sleeper's
+    // full player dictionary, a multi-megabyte first download, if not.
+    const nameProj = MODEL.currentWeek ? await loadProjections(live.season, MODEL.currentWeek) : {};
+    const ids = [];
+    txns.forEach(t => { ids.push(...Object.keys(t.adds || {}), ...Object.keys(t.drops || {})); });
+    if (ids.some(pid => !nameProj[pid])) await loadPlayers();
     const ownerOf = rid => {
       const t = live.byRoster[rid];
       return t ? t.ownerId : null;
     };
-    const playerList = ids => ids.map(pid => esc(playerMeta(pid).name)).join(', ');
+    const playerList = ids => ids.map(pid => esc(projMeta(nameProj, pid).name)).join(', ');
 
     const items = txns.map(t => {
       let icon = '&harr;', text = '';
@@ -333,7 +339,11 @@ views.home = async params => {
   // --- live season block -------------------------------------------
   let liveBlock = '';
   if (live) {
-    const weeksPlayed = Array.from(new Set(live.games.map(g => g.week)));
+    // Finished weeks only. The week being played already has its own live
+    // matchup cards above; showing its half-done scores again as "results"
+    // here read as final.
+    const doneGames = live.finalGames || live.games;
+    const weeksPlayed = Array.from(new Set(doneGames.map(g => g.week)));
     // The most recent week with actual results — not necessarily this week.
     const lastPlayed = weeksPlayed.length ? Math.max.apply(null, weeksPlayed) : 0;
     const bubble = live.standings.slice(0, live.playoffTeams + 2).map((t, i) => `
@@ -346,7 +356,7 @@ views.home = async params => {
           : t.seed <= live.playoffTeams ? '<span class="pill pill-dim">In</span>'
           : '<span class="muted small">Bubble</span>'}</td>
       </tr>`);
-    const lastWeek = lastPlayed ? live.games.filter(g => g.week === lastPlayed).map(g => {
+    const lastWeek = lastPlayed ? doneGames.filter(g => g.week === lastPlayed).map(g => {
       const ta = live.byRoster[g.a], tb = live.byRoster[g.b];
       if (!ta || !tb) return '';
       const aw = g.ap > g.bp;
@@ -452,7 +462,7 @@ views.home = async params => {
     { label: 'Win %', num: 1 }, { label: 'Adj %', num: 1 },
     { label: 'PPG', num: 1 }, { label: 'Titles', num: 1 }], leaders)}
   <p class="small muted" style="margin-top:10px">
-    Ranked by <strong>adjusted win %</strong>, which regresses each record toward .500 by
+    Records include playoff games. Ranked by <strong>adjusted win %</strong>, which regresses each record toward .500 by
     ${MODEL.regressGames} games, so a short career has to earn its place instead of riding a
     hot half-season. <a href="#/managers">See every manager &rarr;</a></p>
 
@@ -605,7 +615,8 @@ views.playoffs = params => {
         </div>`;
       }).join('');
       return `<div class="bk-round">
-        <div class="bk-round-title">Round ${r.round} &middot; Week ${r.week}</div>
+        <div class="bk-round-title">Round ${r.round} &middot; ${r.weeks.length > 1
+          ? `Weeks ${r.weeks[0]}&ndash;${r.weeks[r.weeks.length - 1]}` : `Week ${r.week}`}</div>
         ${matches}</div>`;
     }).join('');
     return `<h3 class="section-title">${esc(label)}</h3>
@@ -768,9 +779,12 @@ views.h2h = params => {
       if (!r) return `<td class="cell none">&middot;</td>`;
       const cls = r.w > r.l ? 'pos' : (r.w < r.l ? 'neg' : 'evn');
       const sel = params.a === a.id && params.b === b.id ? ' sel' : '';
-      const title = `${a.name} vs ${b.name}: ${r.w}-${r.l}${r.t ? '-' + r.t : ''}, ${n1(r.pf)} to ${n1(r.pa)}`;
+      const po = (r.pw || 0) + (r.pl || 0);
+      const title = `${a.name} vs ${b.name}: ${r.w}-${r.l}${r.t ? '-' + r.t : ''}` +
+        (po ? ` (${r.pw || 0}-${r.pl || 0} in the playoffs)` : '') + `, ${n1(r.pf)} to ${n1(r.pa)}`;
       return `<td class="cell ${cls}${sel}" title="${esc(title)}"
-        data-a="${esc(a.id)}" data-b="${esc(b.id)}">${r.w}-${r.l}${r.t ? '-' + r.t : ''}</td>`;
+        data-a="${esc(a.id)}" data-b="${esc(b.id)}">${r.w}-${r.l}${r.t ? '-' + r.t : ''}${po
+          ? '<sup class="po-mark" aria-label="includes playoff games">P</sup>' : ''}</td>`;
     }).join('');
     const tot = ms.reduce((acc, b) => {
       const r = MODEL.h2h[a.id + '|' + b.id];
@@ -820,21 +834,28 @@ views.h2h = params => {
     if (r) {
       const games = r.games.slice().sort((x, y) =>
         y.season.localeCompare(x.season) || y.week - x.week);
-      const gRows = games.map(g => `<tr>
+      // Playoff games carry the bracket's own result, which settles a tied
+      // score; regular-season games are decided by the scores alone.
+      const res = g => g.won != null ? (g.won ? 'W' : 'L')
+        : g.pts > g.oppPts ? 'W' : g.pts < g.oppPts ? 'L' : 'T';
+      const gRows = games.map(g => `<tr class="${g.playoff ? 'row-playoff' : ''}">
         <td>${esc(g.season)}</td>
-        <td class="muted">Week ${g.week}</td>
-        <td class="num ${g.pts > g.oppPts ? 'win' : ''}">${n2(g.pts)}</td>
-        <td class="num ${g.oppPts > g.pts ? 'win' : ''}">${n2(g.oppPts)}</td>
+        <td class="muted">Week ${g.week}${g.playoff
+          ? ` <span class="pill pill-gold">${esc(g.playoff)}</span>` : ''}</td>
+        <td class="num ${res(g) === 'W' ? 'win' : ''}">${n2(g.pts)}</td>
+        <td class="num ${res(g) === 'L' ? 'win' : ''}">${n2(g.oppPts)}</td>
         <td class="num">${n1(Math.abs(g.pts - g.oppPts))}</td>
-        <td>${g.pts > g.oppPts ? '<span class="win">W</span>' :
-          g.pts < g.oppPts ? '<span class="loss">L</span>' : '<span class="muted">T</span>'}</td>
+        <td>${res(g) === 'W' ? '<span class="win">W</span>' :
+          res(g) === 'L' ? '<span class="loss">L</span>' : '<span class="muted">T</span>'}</td>
       </tr>`);
+      const poGames = games.filter(g => g.playoff).length;
       detail = `
-      <h3 class="section-title">${esc(A.name)} vs ${esc(B.name)}</h3>
+      <h3 class="section-title" id="h2hDetail">${esc(A.name)} vs ${esc(B.name)}</h3>
       <div class="grid g4" style="margin-bottom:16px">
         <div class="stat"><div class="stat-label">Series Record</div>
           <div class="stat-value gold">${r.w}-${r.l}${r.t ? '-' + r.t : ''}</div>
-          <div class="stat-meta">from ${esc(A.name)}'s side</div></div>
+          <div class="stat-meta">from ${esc(A.name)}'s side${poGames
+            ? ` &middot; ${r.pw || 0}-${r.pl || 0} in the playoffs` : ''}</div></div>
         <div class="stat"><div class="stat-label">Points Scored</div>
           <div class="stat-value">${n1(r.pf)}</div>
           <div class="stat-meta">vs ${n1(r.pa)} allowed</div></div>
@@ -844,7 +865,9 @@ views.h2h = params => {
           <div class="stat-meta">per meeting</div></div>
         <div class="stat"><div class="stat-label">Meetings</div>
           <div class="stat-value">${games.length}</div>
-          <div class="stat-meta">regular season only</div></div>
+          <div class="stat-meta">${poGames
+            ? `${games.length - poGames} regular season, ${poGames} playoff`
+            : 'all regular season'}</div></div>
       </div>
       ${table(['Season', 'Week', { label: A.name, num: 1 }, { label: B.name, num: 1 },
         { label: 'Margin', num: 1 }, ''], gRows)}
@@ -856,7 +879,7 @@ views.h2h = params => {
   return `
   <div class="page-head">
     <h1 class="page-title">Head to Head</h1>
-    <p class="page-sub">All-time regular-season records. Read across: the row manager's record against each column.</p>
+    <p class="page-sub">All-time records, playoffs included. Read across: the row manager's record against each column.</p>
   </div>
   <div class="toolbar">
     <label class="toggle"><input type="checkbox" id="h2hActive" ${onlyActive ? 'checked' : ''}>
@@ -867,7 +890,8 @@ views.h2h = params => {
     <tbody>${rows.join('')}</tbody></table></div>
   <p class="small muted" style="margin-top:10px">
     <strong>Click any cell</strong> to see every meeting between those two.
-    Playoff games are excluded.</p>
+    A <sup class="po-mark">P</sup> means at least one of those meetings was a playoff game.
+    Consolation-bracket games don't count.</p>
   ${detail}
   <h3 class="section-title">Most Lopsided Rivalries</h3>
   ${table(['Manager', '', 'Manager', { label: 'Record', num: 1 }, { label: 'Pt Diff', num: 1 }], lopsided)}
@@ -970,7 +994,7 @@ views.records = params => {
       <td class="num">${m.worstWeek ? n2(m.worstWeek.pts) : '&mdash;'}</td>
       <td class="num">${m.blowoutLosses}</td>
       <td class="num">${m.closeLosses}</td>
-      <td class="num">${m.fullSeasons - m.playoffs}</td>
+      <td class="num">${m.fullSeasons - m.fullPlayoffs}</td>
     </tr>`);
 
   return `
@@ -1070,6 +1094,7 @@ views.managers = params => {
     <td class="num">${m.bestWeek ? n2(m.bestWeek.pts) : '&mdash;'}</td>
     <td class="num">${m.crowns}</td>
     <td class="num">${m.playoffs}</td>
+    <td class="num">${m.playoffGames ? `${m.pw}-${m.pl}` : '<span class="muted">&mdash;</span>'}</td>
     <td class="num">${m.titles.length ? `<span class="pill pill-gold">${m.titles.length}</span>` : '<span class="muted">0</span>'}</td>
   </tr>`);
 
@@ -1102,7 +1127,10 @@ views.managers = params => {
     { label: 'Record', num: 1 }, { label: 'Win %', num: 1 }, { label: 'Adj %', num: 1 },
     { label: 'PF', num: 1 }, { label: 'PPG', num: 1 },
     { label: 'Diff', num: 1 }, { label: 'Best Wk', num: 1 }, { label: 'Crowns', num: 1 },
-    { label: 'Playoffs', num: 1 }, { label: 'Titles', num: 1 }], rows)}
+    { label: 'Playoffs', num: 1 }, { label: 'Playoff W-L', num: 1 }, { label: 'Titles', num: 1 }], rows)}
+  <p class="small muted" style="margin-top:10px">
+    Record, GP and both win percentages include playoff games. Points columns are regular season.
+    Playoffs is trips to the postseason.</p>
 
   <div class="notice" style="margin-top:16px">
     <strong>Why two win percentages?</strong> Raw win % rewards small samples. A manager
@@ -1127,6 +1155,7 @@ views.manager = async params => {
     <td class="num">${ordinal(s.seed)}</td>
     <td class="num">${n2(s.pf)}</td>
     <td class="num">${n2(s.pa)}</td>
+    <td class="num">${s.playoffW + s.playoffL ? `${s.playoffW}-${s.playoffL}` : '<span class="muted">&mdash;</span>'}</td>
     <td>${medal(s)}</td>
   </tr>`);
 
@@ -1138,7 +1167,8 @@ views.manager = async params => {
 
   const rivalRows = rivals.map(x => `<tr>
     <td>${mgrCell(x.o.id)}</td>
-    <td class="num">${x.r.w}-${x.r.l}${x.r.t ? '-' + x.r.t : ''}</td>
+    <td class="num"><a class="name-link" href="#/h2h?a=${encodeURIComponent(m.id)}&b=${encodeURIComponent(x.o.id)}">${x.r.w}-${x.r.l}${x.r.t ? '-' + x.r.t : ''}</a>${(x.r.pw || x.r.pl)
+      ? `<div class="muted small">${x.r.pw || 0}-${x.r.pl || 0} playoffs</div>` : ''}</td>
     <td class="num" style="color:${x.pct >= .5 ? 'var(--green)' : 'var(--red)'}">${pct(x.pct)}</td>
     <td class="num">${n1(x.r.pf)}</td>
     <td class="num">${n1(x.r.pa)}</td>
@@ -1324,7 +1354,9 @@ views.manager = async params => {
   <div class="grid g4" style="margin-top:20px">
     <div class="stat"><div class="stat-label">All-Time Record</div>
       <div class="stat-value">${recordStr(m)}</div>
-      <div class="stat-meta">${pct(m.winPct)} &middot; ${ordinal(rank)} of ${MODEL.managerList.length}</div></div>
+      <div class="stat-meta">${pct(m.winPct)} &middot; ${ordinal(rank)} of ${MODEL.managerList.length}</div>
+      <div class="stat-meta">${m.regW}-${m.regL}${m.ties ? '-' + m.ties : ''} regular season${m.playoffGames
+        ? ` &middot; ${m.pw}-${m.pl} playoffs` : ''}</div></div>
     <div class="stat"><div class="stat-label">Points Per Game</div>
       <div class="stat-value">${n1(m.ppg)}</div>
       <div class="stat-meta">${n1(m.pf)} total &middot; ${n1(m.papg)} against</div></div>
@@ -1362,11 +1394,15 @@ views.manager = async params => {
 
   <h3 class="section-title">Season by Season</h3>
   ${table(['Season', 'Team Name', { label: 'Record', num: 1 }, { label: 'Seed', num: 1 },
-    { label: 'PF', num: 1 }, { label: 'PA', num: 1 }, ''], seasonRows)}
+    { label: 'PF', num: 1 }, { label: 'PA', num: 1 }, { label: 'Playoffs', num: 1 }, ''], seasonRows)}
+  <p class="small muted" style="margin-top:10px">Record, seed and points are the regular season;
+    the Playoffs column is their record in the championship bracket.</p>
 
   <h3 class="section-title">Against Everyone Else</h3>
   ${table(['Opponent', { label: 'Record', num: 1 }, { label: 'Win %', num: 1 },
     { label: 'PF', num: 1 }, { label: 'PA', num: 1 }, { label: 'Diff', num: 1 }], rivalRows)}
+  <p class="small muted" style="margin-top:10px">Includes playoff meetings.
+    <a href="#/h2h">Full head-to-head grid &rarr;</a></p>
 
   <div class="grid g2">
     <div>
@@ -1540,7 +1576,87 @@ views.draft = params => {
 };
 
 /* ============================== TRADES ============================= */
+/** A trade grade as a coloured letter. */
+function gradePill(letter, big) {
+  if (!letter) return '';
+  const tier = letter[0] === 'A' ? 'ga' : letter[0] === 'B' ? 'gb' : letter[0] === 'C' ? 'gc'
+    : letter[0] === 'D' ? 'gd' : 'gf';
+  return `<span class="grade ${tier}${big ? ' grade-lg' : ''}" title="Trade grade">${esc(letter)}</span>`;
+}
+
+const posOfPlayer = pid => {
+  const m = playerMeta(pid);
+  if (m.pos) return m.pos === 'DST' ? 'DEF' : m.pos;
+  return /^\d+$/.test(String(pid)) ? '' : 'DEF';   // team defenses are keyed by team
+};
+
+/** Grades for every trade in a finished season. Live seasons get none. */
+async function seasonGrades(s) {
+  if (!s.complete) return null;
+  const [txns, weeksPts] = await Promise.all([loadTransactions(s), loadPlayerWeeks(s)]);
+  const out = {};
+  gradeSeasonTrades(s, txns, weeksPts, posOfPlayer).forEach(g => { out[g.id] = g; });
+  return out;
+}
+
+/** One trade as a card; with a grade when the season has one. */
+function tradeCard(t, s, g) {
+  const nameOf = rid => {
+    const tm = s.byRoster[rid];
+    return tm ? mgr(tm.ownerId).name : 'Roster ' + rid;
+  };
+  const sides = t.rosters.map(rid => {
+    const sg = g && g.graded ? g.sides.find(x => x.rosterId === rid) : null;
+    const after = {};
+    if (sg) sg.players.forEach(p => { after[p.pid] = p; });
+    const gotPlayers = Object.keys(t.adds || {}).filter(pid => t.adds[pid] === rid)
+      .sort((a, b) => ((after[b] && after[b].vor) || 0) - ((after[a] && after[a].vor) || 0));
+    const gotFaab = t.faab.filter(f => f.receiver === rid);
+    const gotPicks = t.picks.filter(p => p.owner_id === rid);
+    const items = []
+      .concat(gotPlayers.map(pid => {
+        const p = playerMeta(pid);
+        const a = after[pid];
+        return `<li class="has-face">${playerFace(pid)}
+          <span><strong>${esc(p.name)}</strong>
+          <span class="muted small">${esc([p.pos, p.team].filter(Boolean).join(' · '))}</span>${a
+            ? `<span class="trade-after">${a.weeks
+              ? `${n1(a.pts)} pts in ${a.weeks} wk${a.weeks === 1 ? '' : 's'} with them`
+              : 'never played a counted week for them'}${a.flip
+              ? `, then flipped in Wk ${a.flip.week} for ${n1(a.flip.value)} value` : ''}</span>` : ''}</span></li>`;
+      }))
+      .concat(gotPicks.map(p =>
+        `<li><span class="pill pill-dim">Pick</span> ${esc(p.season)} round ${esc(p.round)}
+          <span class="muted small">from ${esc(nameOf(p.previous_owner_id))}</span></li>`))
+      .concat(gotFaab.map(f =>
+        `<li><span class="pill pill-gold">FAAB</span> $${f.amount}
+          <span class="muted small">from ${esc(nameOf(f.sender))}</span></li>`));
+    const tm = s.byRoster[rid];
+    return `<div class="trade-side">
+      <div class="trade-mgr">${mgrCell(tm ? tm.ownerId : null, null)}${sg ? gradePill(sg.grade) : ''}</div>
+      <div class="trade-label">receives${sg ? ` <span class="trade-val">${n1(sg.value)} value</span>` : ''}</div>
+      <ul class="trade-items">${items.join('') || '<li class="muted">Nothing</li>'}</ul>
+    </div>`;
+  }).join('<div class="trade-arrow">&harr;</div>');
+
+  const verdict = g && g.graded
+    ? (g.winner ? `<span class="small">${mgrLink(g.winner.ownerId)} won this one by
+        <strong>${n1(g.margin)}</strong></span>` : '<span class="small muted">Even trade</span>')
+    : (g && !g.graded ? '<span class="small muted">FAAB only, not graded</span>' : '');
+
+  return `<div class="trade">
+    <div class="trade-head">
+      <span class="pill pill-dim">Week ${t.week}</span>
+      <span class="muted small">${esc(fmtDate(t.created))}</span>
+      <span class="trade-verdict">${verdict}</span>
+    </div>
+    <div class="trade-body">${sides}</div>
+  </div>`;
+}
+
 views.trades = async params => {
+  if (params.view === 'grades') return views.tradeGrades(params);
+
   const list = MODEL.seasons.filter(s => s.started).slice().reverse();
   if (!list.length) return `
     <div class="page-head"><h1 class="page-title">Transactions</h1></div>
@@ -1551,7 +1667,10 @@ views.trades = async params => {
   const s = list.find(x => x.season === season);
 
   await loadPlayers();
-  const txns = await loadTransactions(s);
+  const [txns, grades] = await Promise.all([
+    loadTransactions(s),
+    seasonGrades(s).catch(err => { console.warn('[trade grades]', err); return null; })
+  ]);
 
   const nameOf = rid => {
     const t = s.byRoster[rid];
@@ -1567,40 +1686,7 @@ views.trades = async params => {
   const freeAgents = txns.filter(t => t.type === 'free_agent');
   const faabSpent = waivers.reduce((a, t) => a + (t.bid || 0), 0);
 
-  /* ---- trade cards ---- */
-  const tradeCards = trades.map(t => {
-    const sides = t.rosters.map(rid => {
-      const gotPlayers = Object.keys(t.adds || {}).filter(pid => t.adds[pid] === rid);
-      const gotFaab = t.faab.filter(f => f.receiver === rid);
-      const gotPicks = t.picks.filter(p => p.owner_id === rid);
-      const items = []
-        .concat(gotPlayers.map(pid => {
-          const p = playerMeta(pid);
-          return `<li class="has-face">${playerFace(pid)}
-            <span><strong>${esc(p.name)}</strong>
-            <span class="muted small">${esc([p.pos, p.team].filter(Boolean).join(' · '))}</span></span></li>`;
-        }))
-        .concat(gotPicks.map(p =>
-          `<li><span class="pill pill-dim">Pick</span> ${esc(p.season)} round ${esc(p.round)}
-            <span class="muted small">from ${esc(nameOf(p.previous_owner_id))}</span></li>`))
-        .concat(gotFaab.map(f =>
-          `<li><span class="pill pill-gold">FAAB</span> $${f.amount}
-            <span class="muted small">from ${esc(nameOf(f.sender))}</span></li>`));
-      return `<div class="trade-side">
-        <div class="trade-mgr">${mgrCell(ownerOf(rid), null)}</div>
-        <div class="trade-label">receives</div>
-        <ul class="trade-items">${items.join('') || '<li class="muted">Nothing</li>'}</ul>
-      </div>`;
-    }).join('<div class="trade-arrow">&harr;</div>');
-
-    return `<div class="trade">
-      <div class="trade-head">
-        <span class="pill pill-dim">Week ${t.week}</span>
-        <span class="muted small">${esc(fmtDate(t.created))}</span>
-      </div>
-      <div class="trade-body">${sides}</div>
-    </div>`;
-  }).join('');
+  const tradeCards = trades.map(t => tradeCard(t, s, grades ? grades[t.id] : null)).join('');
 
   /* ---- biggest waiver bids ---- */
   const bidRows = waivers.filter(t => t.bid > 0)
@@ -1631,7 +1717,7 @@ views.trades = async params => {
       if (!a) return;
       if (t.type === 'trade') a.trades++;
       else if (t.type === 'waiver') { a.waivers++; a.spent += t.bid || 0; }
-      else a.fa++;
+      else if (t.type === 'free_agent') a.fa++;
     });
   });
   const actRows = Object.values(activity)
@@ -1650,6 +1736,7 @@ views.trades = async params => {
     <h1 class="page-title">Transactions</h1>
     <p class="page-sub">Every trade, waiver claim and free-agent move.</p>
   </div>
+  ${tradeViewChips('ledger')}
   ${seasonChips(list, season, 'trades')}
 
   <div class="grid g4">
@@ -1668,7 +1755,13 @@ views.trades = async params => {
   </div>
 
   <h3 class="section-title">Trade Ledger</h3>
-  ${trades.length ? `<div class="trade-list">${tradeCards}</div>`
+  ${trades.length ? `<p class="small muted" style="margin-top:-6px;margin-bottom:14px">${s.complete
+      ? (grades ? `Graded on what each side's players actually did after the trade.
+          <a href="#/trades?view=grades">How grades work, and the all-time report card &rarr;</a>`
+        : 'Trade grades could not be loaded right now. Try a refresh.')
+      : `Grades are handed out once the ${esc(season)} season is over, when there's a
+          full rest of season to judge each trade on.`}</p>
+    <div class="trade-list">${tradeCards}</div>`
       : '<div class="empty">No trades were completed this season.</div>'}
 
   <h3 class="section-title">Biggest Waiver Bids</h3>
@@ -1677,6 +1770,116 @@ views.trades = async params => {
   <h3 class="section-title">Activity by Manager</h3>
   ${table(['Manager', { label: 'Trades', num: 1 }, { label: 'Waivers', num: 1 },
     { label: 'FA Moves', num: 1 }, { label: 'FAAB', num: 1 }, { label: 'Total', num: 1 }], actRows)}`;
+};
+
+function tradeViewChips(active) {
+  return `<div class="chip-row" id="tradeView" style="margin-bottom:12px">
+    <a class="chip ${active === 'ledger' ? 'active' : ''}" href="#/trades">Season ledger</a>
+    <a class="chip ${active === 'grades' ? 'active' : ''}" href="#/trades?view=grades">Trade grades</a>
+  </div>`;
+}
+
+/* ----------------------- all-time trade grades ---------------------- */
+views.tradeGrades = async params => {
+  const done = MODEL.completedSeasons.slice();
+  const head = `
+  <div class="page-head">
+    <h1 class="page-title">Trade Grades</h1>
+    <p class="page-sub">Every trade from a finished season, graded on what happened next.</p>
+  </div>
+  ${tradeViewChips('grades')}`;
+  if (!done.length) return head + '<div class="empty">No finished seasons to grade yet.</div>';
+
+  await loadPlayers();
+  const perSeason = await Promise.all(done.map(async s => {
+    const [txns, weeksPts] = await Promise.all([loadTransactions(s), loadPlayerWeeks(s)]);
+    return { s, txns, graded: gradeSeasonTrades(s, txns, weeksPts, posOfPlayer) };
+  }));
+
+  const filter = params.season && done.find(s => s.season === params.season) ? params.season : '';
+  const pool = perSeason.filter(x => !filter || x.s.season === filter);
+  const all = [];
+  pool.forEach(x => x.graded.forEach(g => all.push({ g, s: x.s, t: x.txns.find(t => t.id === g.id) })));
+  const graded = all.filter(x => x.g.graded);
+  const report = tradeReport(graded.map(x => x.g));
+
+  const chips = `<div class="chip-row" id="seasonChips" data-route="trades">
+    <button class="chip ${!filter ? 'active' : ''}" data-season="">All seasons</button>
+    ${done.slice().reverse().map(s => `<button class="chip ${s.season === filter ? 'active' : ''}"
+      data-season="${esc(s.season)}">${esc(s.season)}</button>`).join('')}
+  </div>`;
+
+  const MIN_TRADES = 3;
+  const qualified = report.filter(r => r.trades >= MIN_TRADES);
+  const bestTrader = qualified[0] || report[0];
+  const worstTrader = qualified.length ? qualified[qualified.length - 1] : null;
+  const busiest = report.slice().sort((a, b) => b.trades - a.trades)[0];
+  const heists = graded.slice().sort((a, b) => b.g.margin - a.g.margin);
+  const top = heists[0];
+
+  const rows = report.map((r, i) => `<tr>
+    <td class="rank">${i + 1}</td>
+    <td>${mgrCell(r.ownerId)}</td>
+    <td class="num">${r.trades}</td>
+    <td class="num">${r.won}-${r.lost}${r.even ? '-' + r.even : ''}</td>
+    <td class="num"><strong>${r.gpa.toFixed(2)}</strong></td>
+    <td class="num">${gradePill(letterForGpa(r.gpa))}</td>
+    <td class="num" style="color:${r.net >= 0 ? 'var(--green)' : 'var(--red)'}">${r.net >= 0 ? '+' : ''}${n1(r.net)}</td>
+    <td class="small">${r.best && r.best.side.net > 0 ? `${gradePill(r.best.side.grade)}
+      <span class="muted">${esc(r.best.trade.season)} Wk ${r.best.trade.week}</span>` : '<span class="muted">&mdash;</span>'}</td>
+  </tr>`);
+
+  const heistCards = heists.slice(0, 5).map(x => `<div>
+      <div class="small muted" style="margin-bottom:6px">${esc(x.s.season)} season</div>
+      ${tradeCard(x.t, x.s, x.g)}</div>`).join('');
+
+  return `${head}
+  ${chips}
+
+  <div class="grid g4">
+    <div class="stat"><div class="stat-label">Trades Graded</div>
+      <div class="stat-value gold">${graded.length}</div>
+      <div class="stat-meta">${filter ? esc(filter) : done.map(s => s.season).join(', ')}${all.length > graded.length
+        ? ` &middot; ${all.length - graded.length} FAAB-only skipped` : ''}</div></div>
+    <div class="stat"><div class="stat-label">Best Trader <span class="stat-note">${MIN_TRADES}+ trades</span></div>
+      <div class="stat-value">${bestTrader ? esc(mgr(bestTrader.ownerId).name) : '&mdash;'}</div>
+      <div class="stat-meta">${bestTrader ? `${bestTrader.gpa.toFixed(2)} GPA &middot; ${bestTrader.trades} trades` : ''}</div></div>
+    <div class="stat"><div class="stat-label">Biggest Heist</div>
+      <div class="stat-value">${top && top.g.winner ? esc(mgr(top.g.winner.ownerId).name) : '&mdash;'}</div>
+      <div class="stat-meta">${top && top.g.winner ? `won by ${n1(top.g.margin)} &middot; ${esc(top.s.season)} Wk ${top.g.week}` : ''}</div></div>
+    <div class="stat"><div class="stat-label">Most Trades</div>
+      <div class="stat-value">${busiest ? esc(mgr(busiest.ownerId).name) : '&mdash;'}</div>
+      <div class="stat-meta">${busiest ? `${busiest.trades} graded trades${worstTrader && worstTrader !== bestTrader
+        ? ` &middot; lowest GPA: ${esc(mgr(worstTrader.ownerId).name)}` : ''}` : ''}</div></div>
+  </div>
+
+  <h3 class="section-title">Report Card</h3>
+  ${table(['#', 'Manager', { label: 'Trades', num: 1 }, { label: 'W-L-Even', num: 1 },
+    { label: 'GPA', num: 1 }, { label: 'Grade', num: 1 }, { label: 'Net Value', num: 1 }, 'Best Trade'], rows)}
+  <p class="small muted" style="margin-top:10px">
+    A trade is won by the side that got 3+ more value out of it. GPA is on the usual 4.0 scale
+    (A+ is 4.3). Net value is everything gained minus everything given up, across every trade.</p>
+
+  <h3 class="section-title">Most Lopsided Trades</h3>
+  ${heistCards ? `<div class="trade-list">${heistCards}</div>` : '<div class="empty">No graded trades.</div>'}
+
+  <h3 class="section-title">How Grades Work</h3>
+  <div class="panel small" style="line-height:1.65">
+    <p style="margin-top:0">Each player a team received is followed from the trade to the end of the
+      season, for as long as he stayed on that team. Trade him away again or drop him and he stops
+      counting for them. If he was flipped in another trade, he also carries his share of what that
+      trade brought back, so turning one deal into a better one gets credit.</p>
+    <p>Every week he earns <strong>value</strong>: his points minus what a replacement-level player at
+      his position scored that season (roughly the last starter in the league at that spot). A bad or
+      injured week counts as zero, not a penalty, since the team could start someone else. That keeps a
+      kicker's 15 from being worth the same as a running back's 15.</p>
+    <p>Regular-season weeks always count. Playoff weeks count while the team was still playing for the
+      title or third place.</p>
+    <p>A side's grade comes from its value minus what the other side got:
+      ${TRADE_GRADE_BANDS.slice(0, -1).map(b => `${b[0]}+ is ${gradePill(b[1])}/${gradePill(b[2])}`).join(', ')},
+      and anything within 3 is a ${gradePill('C')} for both. FAAB that changes hands is shown but not
+      counted, and trades of only FAAB aren't graded. The season in progress isn't graded until it's over.</p>
+  </div>`;
 };
 
 /* ============================== MONEY ============================== */
