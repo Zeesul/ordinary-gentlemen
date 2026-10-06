@@ -1,7 +1,11 @@
 /* ===================================================================
-   app.js — routing, startup and page wiring.
-   Loads last, after data.js / model.js / charts.js / views.js.
+   app.js — routing, startup, the sidebar, and generic page wiring
+   (sortable tables, "show all" buttons, filters that live in the URL).
+   Loads last.
    =================================================================== */
+
+let AFTER = [];                 // per-render hooks registered by views
+const after = fn => { AFTER.push(fn); };
 
 function parseHash() {
   const raw = (location.hash || '#/').replace(/^#\/?/, '');
@@ -12,206 +16,141 @@ function parseHash() {
 }
 
 function setHash(route, params) {
-  const q = new URLSearchParams();
-  Object.keys(params || {}).forEach(k => { if (params[k]) q.set(k, params[k]); });
-  const s = q.toString();
-  location.hash = '#/' + route + (s ? '?' + s : '');
-}
-
-function markNav(route) {
-  $$('.mainnav a').forEach(a => {
-    const r = a.dataset.route;
-    const on = r === route || (r === 'managers' && route === 'manager');
-    a.classList.toggle('active', on);
-    // tell assistive tech which page this is, not just which link looks gold
-    if (on) a.setAttribute('aria-current', 'page');
-    else a.removeAttribute('aria-current');
-  });
-}
-
-/* ---- things that need hooking up after a page is painted ---------- */
-function wirePage(route) {
-  const host = $('#view');
-
-  // homepage week chips (browse past weeks without leaving Home)
-  const weekChips = $('#homeWeekChips', host);
-  if (weekChips) {
-    weekChips.addEventListener('click', e => {
-      const btn = e.target.closest('.chip');
-      if (!btn) return;
-      setHash('home', { week: btn.dataset.week });
-    });
-  }
-
-  // season chips (standings, playoffs, draft, trades)
-  const chips = $('#seasonChips', host);
-  if (chips) {
-    chips.addEventListener('click', e => {
-      const btn = e.target.closest('.chip');
-      if (!btn) return;
-      // carry the current view mode across a season change (draft board/list)
-      const cur = parseHash().params;
-      setHash(chips.dataset.route || route,
-        { season: btn.dataset.season, view: cur.view });
-    });
-  }
-
-  // chart mode toggle on the standings page
-  const chartChips = $('#chartChips', host);
-  if (chartChips) {
-    chartChips.addEventListener('click', e => {
-      const btn = e.target.closest('.chip');
-      if (!btn) return;
-      setHash('standings', {
-        season: chartChips.dataset.season,
-        chart: btn.dataset.chart
-      });
-    });
-  }
-
-  // record book filters
-  const filters = $('#recFilters', host);
-  if (filters) {
-    const apply = () => setHash('records', {
-      mgr: $('#recMgr').value,
-      season: $('#recSeason').value
-    });
-    $('#recMgr').addEventListener('change', apply);
-    $('#recSeason').addEventListener('change', apply);
-    const clear = $('#recClear');
-    if (clear) clear.addEventListener('click', () => setHash('records', {}));
-  }
-
-  // managers page sorting + qualification toggle
-  const mgrTools = $('#mgrTools', host);
-  if (mgrTools) {
-    const { params } = parseHash();
-    mgrTools.addEventListener('click', e => {
-      const btn = e.target.closest('.chip');
-      if (!btn) return;
-      setHash('managers', { sort: btn.dataset.sort, qual: params.qual });
-    });
-    const q = $('#qualOnly', host);
-    if (q) q.addEventListener('change', () =>
-      setHash('managers', { sort: params.sort, qual: q.checked ? '1' : '' }));
-  }
-
-  // head-to-head: click a cell for the full series
-  const h2hTable = $('.h2h', host);
-  if (h2hTable) {
-    h2hTable.addEventListener('click', e => {
-      const cell = e.target.closest('td.cell');
-      if (!cell || !cell.dataset.a) return;
-      setHash('h2h', { a: cell.dataset.a, b: cell.dataset.b });
-    });
-  }
-  const h2hClear = $('#h2hClear', host);
-  if (h2hClear) h2hClear.addEventListener('click', () => setHash('h2h', {}));
-  const h2hActive = $('#h2hActive', host);
-  if (h2hActive) h2hActive.addEventListener('change', () =>
-    setHash('h2h', { active: h2hActive.checked ? '1' : '' }));
-
-  // draft page: board/manager toggle, position chips and player search
-  const dTools = $('#draftTools', host);
-  if (dTools) {
-    const view = $('#draftView', host);
-    if (view) view.addEventListener('click', e => {
-      const btn = e.target.closest('.chip');
-      if (!btn) return;
-      setHash('draft', { season: dTools.dataset.season, view: btn.dataset.view });
-    });
-
-    const search = $('#draftSearch', host);
-    const count = $('#draftCount', host);
-    // Filtering dims picks in place rather than removing them, so the board
-    // keeps its shape and you can still see WHERE the runs happened.
-    const apply = () => {
-      const pos = dTools.dataset.pos || 'ALL';
-      const q = (search && search.value || '').trim().toLowerCase();
-      const items = $$('.dcell[data-pos], .drow[data-pos]', host);
-      let shown = 0;
-      items.forEach(el => {
-        const hit = (pos === 'ALL' || el.dataset.pos === pos) &&
-          (!q || el.dataset.name.indexOf(q) !== -1);
-        el.classList.toggle('dim', !hit);
-        if (hit) shown++;
-      });
-      if (count) {
-        count.textContent = (pos === 'ALL' && !q) ? ''
-          : shown + ' of ' + items.length + ' picks';
-      }
-    };
-
-    dTools.addEventListener('click', e => {
-      const btn = e.target.closest('.chip[data-pos]');
-      if (!btn) return;
-      dTools.dataset.pos = btn.dataset.pos;
-      $$('.chip[data-pos]', dTools).forEach(x => x.classList.toggle('active', x === btn));
-      apply();
-    });
-    if (search) search.addEventListener('input', apply);
-  }
-
-  /* A page with many sections (the record book runs to ten) is a long scroll
-     with no way back. Give those pages a jump bar built from their own
-     headings — no per-page markup needed. */
-  const sections = $$('.section-title', host);
-  if (sections.length >= 5 && !$('#jumpbar', host)) {
-    const links = sections.map((h, i) => {
-      if (!h.id) h.id = 'sec-' + i;
-      return `<a class="chip" href="#${h.id}">${esc(h.textContent.trim())}</a>`;
-    }).join('');
-    const bar = document.createElement('div');
-    bar.id = 'jumpbar';
-    bar.className = 'jumpbar';
-    bar.innerHTML = `<span class="jumpbar-label">Jump to</span>
-      <div class="chip-row">${links}</div>`;
-    const anchor = $('.page-head', host) || host.firstElementChild;
-    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(bar, anchor.nextSibling);
-    // hash links inside a hash-routed SPA must not change the route
-    bar.addEventListener('click', e => {
-      const a = e.target.closest('a[href^="#sec-"]');
-      if (!a) return;
-      e.preventDefault();
-      const el = $('#' + a.getAttribute('href').slice(1), host);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
-
-  wireCharts(host);
-
-  // draft countdown, ticking every second
-  clearInterval(wirePage._countdown);
-  const cd = $('#draftCountdown', host);
-  if (cd) {
-    const ts = Number(cd.dataset.ts);
-    const nums = {};
-    $$('.dt-num', cd).forEach(n => { nums[n.dataset.u] = n; });
-    const tick = () => {
-      let diff = Math.floor((ts - Date.now()) / 1000);
-      if (diff <= 0) {
-        clearInterval(wirePage._countdown);
-        $('.draft-timer', cd).innerHTML =
-          '<div class="dt-live">It\'s draft day. Good luck, gentlemen.</div>';
-        return;
-      }
-      nums.d.textContent = Math.floor(diff / 86400);
-      nums.h.textContent = String(Math.floor(diff % 86400 / 3600)).padStart(2, '0');
-      nums.m.textContent = String(Math.floor(diff % 3600 / 60)).padStart(2, '0');
-      nums.s.textContent = String(diff % 60).padStart(2, '0');
-    };
-    tick();
-    wirePage._countdown = setInterval(tick, 1000);
-  }
+  location.hash = hrefWith(route, params).slice(1);
 }
 
 const TITLES = {
-  home: '', standings: 'Standings', playoffs: 'Playoffs', champions: 'Trophy Room',
-  h2h: 'Head to Head', records: 'Record Book', managers: 'Managers',
-  manager: 'Manager', draft: 'Draft History', trades: 'Transactions',
-  money: 'Money'
+  home: 'Overview', standings: 'Standings', playoffs: 'Playoffs', champions: 'Champions',
+  week: 'This Week', outlook: 'Outlook', managers: 'Managers', manager: 'Manager',
+  rosters: 'Rosters', h2h: 'Head to Head', trades: 'Trades', waivers: 'Waivers',
+  draft: 'Draft', records: 'Record Book', money: 'Money'
 };
+const NAV_ALIAS = { manager: 'managers' };
 
+function markNav(route) {
+  const r = NAV_ALIAS[route] || route;
+  $$('#sidenav .nav-link').forEach(a => {
+    const on = a.dataset.route === r;
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+}
+
+function closeDrawer() {
+  document.body.classList.remove('nav-open');
+  const b = $('#menuBtn');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+
+/* ------------------------------ generic wiring --------------------- */
+function sortTable(th) {
+  const table = th.closest('table');
+  const wrap = th.closest('.table-wrap');
+  const tbody = table.tBodies[0];
+  const col = Number(th.dataset.col);
+  const type = th.dataset.type;
+  const dir = th.dataset.dir === 'desc' ? 'asc' : (th.dataset.dir === 'asc' ? 'desc' : (type === 'num' ? 'desc' : 'asc'));
+  $$('th', table).forEach(h => {
+    delete h.dataset.dir;
+    const a = $('.arrow', h);
+    if (a) a.remove();
+  });
+  th.dataset.dir = dir;
+  th.insertAdjacentHTML('beforeend', `<span class="arrow">${dir === 'desc' ? '&darr;' : '&uarr;'}</span>`);
+  const rows = Array.from(tbody.rows).filter(r => !r.classList.contains('empty-row'));
+  const val = r => {
+    const c = r.cells[col];
+    if (!c) return null;
+    if (c.dataset.v != null && c.dataset.v !== '') return type === 'num' ? Number(c.dataset.v) : c.dataset.v;
+    const t = c.textContent.trim();
+    if (type === 'num') {
+      const n = parseFloat(t.replace(/[,$%±+]/g, '').replace(/^−/, '-'));
+      return isNaN(n) ? null : n;
+    }
+    return t.toLowerCase();
+  };
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const c = type === 'num' ? x - y : String(x).localeCompare(String(y));
+    return dir === 'desc' ? -c : c;
+  });
+  const limit = wrap && wrap.dataset.limit && !wrap.classList.contains('show-all') ? Number(wrap.dataset.limit) : 0;
+  rows.forEach((r, i) => {
+    tbody.appendChild(r);
+    const rk = r.querySelector('td.rank');
+    if (rk && table.dataset.rerank !== 'no') rk.textContent = i + 1;
+    if (limit) r.classList.toggle('extra', i >= limit);
+  });
+}
+
+function wirePage(root) {
+  // sortable tables
+  $$('th.sortable', root).forEach(th => {
+    if (th.dataset.wired) return;
+    th.dataset.wired = '1';
+    th.addEventListener('click', () => sortTable(th));
+  });
+  // "show all N" under long tables
+  $$('.table-more', root).forEach(btn => {
+    if (btn.dataset.wired || btn.dataset.expand) return;
+    const wrap = btn.closest('.table-wrap');
+    if (!wrap) return;
+    btn.dataset.wired = '1';
+    const limit = $$('tbody tr', wrap).filter(r => !r.classList.contains('extra')).length;
+    wrap.dataset.limit = limit;
+    btn.addEventListener('click', () => {
+      const open = wrap.classList.toggle('show-all');
+      btn.textContent = open ? 'Show fewer' : 'Show all ' + btn.dataset.more;
+    });
+  });
+  // column expanders: <button data-cols="#tableId">
+  $$('[data-cols]', root).forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      const t = $(btn.dataset.cols);
+      if (!t) return;
+      const open = t.classList.toggle('show-cols');
+      btn.textContent = open ? btn.dataset.less : btn.dataset.moreLabel;
+    });
+  });
+  // generic expanders: <button data-expand="#id">
+  $$('[data-expand]', root).forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      const t = $(btn.dataset.expand);
+      if (!t) return;
+      const open = t.classList.toggle('show-all');
+      btn.textContent = open ? btn.dataset.less : btn.dataset.moreLabel;
+    });
+  });
+  // selects and checkboxes that live in the URL
+  $$('select[data-param]', root).forEach(sel => {
+    if (sel.dataset.wired) return;
+    sel.dataset.wired = '1';
+    sel.addEventListener('change', () => {
+      const { route, params } = parseHash();
+      const next = Object.assign({}, params, { [sel.dataset.param]: sel.value });
+      if (sel.dataset.reset) sel.dataset.reset.split(',').forEach(k => { delete next[k]; });
+      setHash(sel.dataset.route || route, next);
+    });
+  });
+  $$('input[type=checkbox][data-param]', root).forEach(cb => {
+    if (cb.dataset.wired) return;
+    cb.dataset.wired = '1';
+    cb.addEventListener('change', () => {
+      const { route, params } = parseHash();
+      setHash(route, Object.assign({}, params, { [cb.dataset.param]: cb.checked ? '1' : '' }));
+    });
+  });
+  wireCharts(root);
+}
+
+/* ------------------------------ render ----------------------------- */
 let renderToken = 0;
 
 async function render() {
@@ -219,55 +158,100 @@ async function render() {
   const view = views[route] || views.home;
   const host = $('#view');
   const token = ++renderToken;
+  DEFERRED = [];
+  AFTER = [];
 
   markNav(route);
-  $('#mainnav').classList.remove('open');
+  closeDrawer();
+  const title = route === 'manager' && MODEL.managers[params.id] ? MODEL.managers[params.id].name
+    : (TITLES[route] || TITLES.home);
+  $('#pageTitle').textContent = title;
+  document.title = route === 'home' ? 'The League of Ordinary Gentlemen'
+    : `${title} | The League of Ordinary Gentlemen`;
 
+  let html;
   try {
     const out = view(params);
     if (out && typeof out.then === 'function') {
-      host.innerHTML = `<div class="loading-page">
-        <div class="boot-spinner"></div>
-        <div class="muted small">Loading…</div></div>`;
-      const html = await out;
-      if (token !== renderToken) return;   // a newer navigation won
-      host.innerHTML = html;
+      host.innerHTML = `<div class="loading-page"><div class="spinner"></div><div class="small">Loading&hellip;</div></div>`;
+      html = await out;
+      if (token !== renderToken) return;     // a newer navigation won
     } else {
-      host.innerHTML = out;
+      html = out;
     }
   } catch (err) {
     console.error(err);
     if (token !== renderToken) return;
-    host.innerHTML = `<div class="empty">Something went wrong loading this page.<br>
-      <span class="small">${esc(err.message || String(err))}</span></div>`;
+    html = empty(`Something went wrong loading this page.<br><span class="small">${esc(err.message || String(err))}</span>`);
   }
+  const banner = route === 'manager' ? '' : youBanner();
+  host.innerHTML = banner + html + footerHtml();
+  wirePage(host);
+  AFTER.forEach(fn => { try { fn(host); } catch (e) { console.error(e); } });
 
-  wirePage(route);
+  // deferred sections fill in as their data arrives
+  const jobs = DEFERRED;
+  DEFERRED = [];
+  jobs.forEach(job => {
+    Promise.resolve().then(job.fn).then(out => {
+      if (token !== renderToken) return;
+      const el = document.getElementById(job.id);
+      if (!el) return;
+      el.innerHTML = out || '';
+      wirePage(el);
+    }).catch(err => {
+      console.error('[deferred]', job.id, err);
+      const el = document.getElementById(job.id);
+      if (el && token === renderToken) el.innerHTML = empty('This section could not load right now. Try the refresh button.');
+    });
+  });
 
-  const base = 'The League of Ordinary Gentlemen';
-  const extra = route === 'manager' && MODEL && MODEL.managers[params.id]
-    ? MODEL.managers[params.id].name : TITLES[route];
-  document.title = extra ? `${extra} | ${base}` : base;
-
-  // Keep the reader in place when they're only changing a filter on the
-  // same page. Arriving from another page always starts at the top, except
-  // a link straight to one rivalry, which lands on that matchup.
+  // Keep the reader in place when only a filter on the same page changed.
   const samePage = route === render._lastRoute;
   render._lastRoute = route;
-  const detail = route === 'h2h' && params.a && $('#h2hDetail', host);
-  if (!samePage && detail) detail.scrollIntoView({ block: 'start' });
-  else if (!samePage || (!params.a && !params.mgr && !params.sort && !params.chart)) window.scrollTo(0, 0);
+  if (!samePage || params.top) window.scrollTo(0, 0);
+  const focusEl = params.focus && document.getElementById(params.focus);
+  if (focusEl) focusEl.scrollIntoView({ block: 'start' });
+}
+
+function footerHtml() {
+  return `<footer class="footer">
+    Data pulled live from the Sleeper API and built in your browser. Market values from
+    <a href="https://github.com/dynastyprocess/data" target="_blank" rel="noopener">DynastyProcess</a>.
+  </footer>`;
+}
+
+/* ------------------------------ sidebar ---------------------------- */
+function fillSidebar() {
+  const sel = $('#viewer');
+  const current = viewerId();
+  const active = MODEL.managerList.filter(m => m.active).sort((a, b) => a.name.localeCompare(b.name));
+  const former = MODEL.managerList.filter(m => !m.active && !/^Unknown/.test(m.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const opt = m => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''}>${esc(m.name)}</option>`;
+  sel.innerHTML = `<option value="">Everyone</option>
+    <optgroup label="Current managers">${active.map(opt).join('')}</optgroup>
+    ${former.length ? `<optgroup label="Former managers">${former.map(opt).join('')}</optgroup>` : ''}`;
+  if (current && !MODEL.managers[current]) setViewer('');
+
+  const first = MODEL.seasons[0];
+  const cur = MODEL.currentSeason;
+  const sub = $('#brandSub');
+  if (sub && first && cur) sub.innerHTML = `Est. ${esc(first.season)} &middot; ${cur.numTeams} teams &middot; PPR`;
+  const live = $('#liveBadge');
+  if (live) live.hidden = !MODEL.liveSeason;
+}
+
+function stamp(raw) {
+  const mins = Math.round((Date.now() - Math.max(raw.fetchedAt, raw.liveAt || 0)) / 60000);
+  const txt = mins < 1 ? 'Synced just now' : `Synced ${mins < 60 ? mins + 'm' : Math.round(mins / 60) + 'h'} ago`;
+  const a = $('#syncNote');
+  if (a) a.textContent = txt;
+  const b = $('#cacheNote');
+  if (b) b.textContent = txt;
 }
 
 /* ------------------------------ startup --------------------------- */
-function stamp(raw) {
-  const note = $('#cacheNote');
-  if (!note) return;
-  const mins = Math.round((Date.now() - raw.fetchedAt) / 60000);
-  note.textContent = mins < 1 ? 'Data loaded just now'
-    : `Data loaded ${mins} minute${mins === 1 ? '' : 's'} ago`;
-}
-
 async function start(force) {
   boot.show('Contacting Sleeper…');
   let raw = force ? null : readCache();
@@ -282,25 +266,60 @@ async function start(force) {
     }
   } else {
     boot.say('Loaded from cache');
+    // the player list is cached separately; a stale one reloads in the background
+    await loadPlayers().catch(() => null);
   }
   MODEL = buildModel(raw);
+  buildAnalytics(MODEL);
+  fillSidebar();
   stamp(raw);
+  clearInterval(start._stamp);
+  start._stamp = setInterval(() => stamp(raw), 60000);
   boot.hide();
+  $('#refreshBtn').classList.remove('spin');
   render();
+  // History is cached for hours, but a live season's scores shouldn't be.
+  // Re-pull just that season in the background, then quietly redraw.
+  if (!force && raw.seasons.some(s => s.inProgress) &&
+      Date.now() - (raw.liveAt || raw.fetchedAt) > CONFIG.liveMins * 60000) {
+    refreshLive(raw).then(fresh => {
+      if (!fresh) return;
+      writeCache(fresh);
+      MODEL = buildModel(fresh);
+      buildAnalytics(MODEL);
+      fillSidebar();
+      stamp(fresh);
+      const { route } = parseHash();
+      if (['home', 'week', 'outlook', 'standings', 'manager', 'rosters'].indexOf(route) !== -1) render();
+    }).catch(err => console.warn('[live refresh]', err));
+  }
 }
 
 window.addEventListener('hashchange', () => { if (MODEL) render(); });
 
 document.addEventListener('DOMContentLoaded', () => {
-  $('#navToggle').addEventListener('click', () => {
-    const nav = $('#mainnav');
-    nav.classList.toggle('open');
-    $('#navToggle').setAttribute('aria-expanded', nav.classList.contains('open'));
+  $('#menuBtn').addEventListener('click', () => {
+    const open = document.body.classList.toggle('nav-open');
+    $('#menuBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  $('#scrim').addEventListener('click', closeDrawer);
+  $('#viewer').addEventListener('change', e => {
+    setViewer(e.target.value);
+    if (MODEL) render();
   });
   $('#refreshBtn').addEventListener('click', () => {
-    Object.keys(localStorage).forEach(k => {
-      if (k.indexOf('log_') === 0) localStorage.removeItem(k);
-    });
+    $('#refreshBtn').classList.add('spin');
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.indexOf('log_') === 0 && k !== CONFIG.viewerKey &&
+            k.indexOf(CONFIG.valuesSnapKey) !== 0 && k.indexOf(CONFIG.playerKey) !== 0) {
+          localStorage.removeItem(k);
+        }
+      });
+    } catch (_) { /* ignore */ }
+    Object.keys(TXN_MEMO).forEach(k => { delete TXN_MEMO[k]; });
+    Object.keys(PROJ_MEMO).forEach(k => { delete PROJ_MEMO[k]; });
+    MEMO.clear();
     start(true);
   });
   start(false);

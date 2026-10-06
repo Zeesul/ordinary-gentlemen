@@ -12,40 +12,57 @@ re-upload data.
 
 ## Pages
 
+The menu runs down the left side (a slide-out drawer on phones). Pick yourself under
+**Viewing as** and every page highlights you, adds a "your stats" line at the top, and
+fills in the personal parts (your season history, your matchup, your playoff odds).
+The choice is remembered in that browser only.
+
 | Page | What's on it |
 |---|---|
-| Home | League totals, reigning champion, all-time leaders, and a live playoff picture during the season |
-| Standings | Final standings for any season, an interactive season race chart, and every week's scores |
+| Overview | Reigning champion, the live week's scores, headline stat cards, an all-time (or one-season) standings table with 18 sortable columns (efficiency, all-play, luck, max PF, consistency…), season history, 15 awards, trade highlights, best and worst weeks. The **Advanced** tab charts weekly scoring, weekly power rankings, each team's score distribution and year-over-year PPG |
+| This Week | Every matchup with live scores, Sleeper projections and win odds; your lineup next to your opponent's, a "points left on your bench" check and free-agent upgrades; the weekly high-score bounty; recent moves. Tap any matchup for both lineups |
+| Outlook | Playoff, bye and title odds from 10,000 simulations of the rest of the season, change since last week, your remaining schedule, a rooting guide for this week, and where your season could end up |
+| Standings | Any season's standings with efficiency, all-play and luck, the season race chart (points, wins or power rank) and every week's scoreboard |
 | Playoffs | Real brackets with scores and seeds, championship and consolation sides |
-| Champions | Trophy room, plus hardware counts for everyone |
-| Head to Head | All-time grid, playoff games included; click any cell for every meeting between those two |
-| Record Book | Highs, lows, blowouts, nail-biters, weekly crowns, Hall of Shame — filterable by manager and season |
-| Managers | Career table with sorting; click a name for a full profile and career-form chart |
-| Draft | Every draft board, first-round highlights, and keepers |
-| Trades | Trade ledger with players/FAAB/picks and grades for finished seasons, an all-time trade report card, biggest waiver bids, and activity per manager |
-| Money | Career winnings, buy-ins and net profit for everyone, plus each season's prize structure |
+| Champions | Trophy room, each title team, and how everyone has finished |
+| Managers | Career table, sortable; click a name for the full profile (record showcase, career form, season by season, trading, draft report cards, rivals, best/worst weeks, winnings, this season's moves) |
+| Rosters | Every roster's market value, last 30 days of value for your team, and positional strengths |
+| Head to Head | All-time grid (playoffs included); click any cell for every meeting |
+| Trades | Every trade, graded (see below), filterable by manager, season and grade; a League Overview with each manager's trade record, a trade-partner grid and the most-traded players |
+| Waivers | Every pickup graded on what it scored in your lineup; team summary, biggest bids, best pickups |
+| Draft | Every draft board with hindsight grades on each pick, a by-manager view, report cards, steals and busts |
+| Record Book | Highs, lows, blowouts, nail-biters, weekly crowns, Hall of Shame, filterable by manager and season |
+| Money | Career winnings, buy-ins and net for everyone, plus each season's prize structure |
 
 ## Files
 
 ```
-index.html          page shell + navigation
-serve.bat           double-click to preview the site locally
-assets/style.css    all styling
-assets/data.js      config, Sleeper API calls, caching
-assets/payouts.js   buy-ins and prize structure for each season
-assets/model.js     all statistics are computed here
-assets/charts.js    the SVG charts and their crosshair tooltip
-assets/views.js     one function per page
-assets/app.js       routing and startup
+index.html                 page shell + sidebar menu
+serve.bat                  double-click to preview the site locally
+assets/style.css           all styling (colours are tokens at the top)
+assets/data.js             config, Sleeper API calls, market values, caching
+assets/payouts.js          buy-ins and prize structure for each season
+assets/model.js            core statistics: standings, head-to-head, records, money
+assets/analytics.js        efficiency, all-play, luck, power ranks, awards, odds, the playoff simulation
+assets/grades.js           trade, waiver and draft grades
+assets/charts.js           the SVG charts and their crosshair tooltip
+assets/ui.js               shared pieces: tables, cards, pills, grade chips
+assets/views-overview.js   Overview, This Week, Outlook
+assets/views-league.js     Standings, Playoffs, Champions, Head to Head, Record Book, Managers, Money
+assets/views-moves.js      Trades, Waivers, Draft, Rosters
+assets/app.js              routing, startup, sidebar, sortable tables
+assets/values-history.json weekly market values back to 2022 (see "Market values" below)
+tools/build_values.py      rebuilds values-history.json
 ```
 
 ## Viewing it locally
 
-Double-click `index.html`. That's it.
-
-If your browser blocks the data request when opening the file directly, double-click
-**`serve.bat`** instead — it starts a small local server and opens the site at
+Double-click **`serve.bat`**. It starts a small local server and opens the site at
 <http://localhost:8000>. Leave that window open while browsing, and close it when done.
+
+(Opening `index.html` directly mostly works too, but browsers block a page opened from a
+file from reading other files next to it, so the trade grades lose their market-value
+history that way.)
 
 ## Naming managers who left the league
 
@@ -144,9 +161,9 @@ Scores, standings, records, playoff brackets, trades and weekly prize money all 
 from Sleeper every time someone opens the page. You never upload results. The 2026 season
 starts filling in by itself the moment the draft happens.
 
-The site keeps a 3-hour cache in each visitor's browser so repeat visits are instant. If
-someone wants the very latest mid-game numbers, the **Force refresh data** link in the
-footer clears it.
+The site keeps a 3-hour cache of league history in each visitor's browser so repeat visits
+are instant, and re-pulls the live season in the background every few minutes. The circular
+**refresh** button at the top right reloads everything from Sleeper.
 
 ### Once a year: add the payouts
 
@@ -178,7 +195,8 @@ will often show you the old version.
 | Add this year's prize money | `assets/payouts.js` |
 | Name a departed manager | `MANAGER_OVERRIDES` in `assets/data.js` |
 | Change colors or fonts | the `:root` block at the top of `assets/style.css` |
-| Rename a page or reorder the menu | the `<nav>` block in `index.html` |
+| Rename a page or reorder the menu | the sidebar `<nav>` block in `index.html` (and `TITLES` in `assets/app.js`) |
+| Tune trade/waiver/draft grades | `TRADE_BANDS`, `waiverTier` and `DRAFT_BANDS` in `assets/grades.js` |
 | Start a brand-new league | `CONFIG.leagueId` in `assets/data.js` |
 | Change how long data is cached | `CONFIG.cacheHours` in `assets/data.js` |
 
@@ -214,14 +232,22 @@ pulls managers, rosters, weekly matchups, the playoff bracket and the draft boar
 computes everything else locally:
 
 - **Standings** come from each season's final roster records, sorted by wins then points.
-- **Head-to-head** is rebuilt game by game from regular-season matchups. Playoff games
-  are excluded so the grid stays comparable across years.
+- **Head-to-head** is rebuilt game by game from matchups, with playoff games taken from the
+  championship bracket.
 - **Champions** come from the playoff bracket (the match flagged as the championship),
   with a fallback to the league's recorded winner.
 - **Consolation champion** is the winner of the losers-bracket final. **Last place** is
   *not* taken from that bracket — its placings depend on league settings and routinely
   disagree with reality, so last place is simply the worst regular-season record.
 - **Records** are calculated across every regular-season team-week in league history.
+- **Efficiency** compares each week's score with the best lineup that roster could have set,
+  filling every slot with its highest scorer who's eligible.
+- **All-play** is each team's record against every other team's score, every week.
+- **Luck** is wins while scoring under the weekly median minus losses while scoring over it.
+- **Win odds** treat each team's final score as points so far plus Sleeper's projection for
+  whoever hasn't played, give or take the league's usual week-to-week swing.
+- **Playoff odds** simulate the rest of the season 10,000 times from each team's scoring so
+  far, pulled toward its projected lineup early in the year.
 
 ### Adding next season's payouts
 
@@ -267,16 +293,47 @@ count. Points-for, PPG and the Record Book stay regular season.
 
 ### Trade grades
 
-Only finished seasons are graded. Each player a team received is followed from the trade
-until he leaves that roster, earning points above a replacement-level player at his
-position each week (never below zero). A player flipped in a later trade also carries his
-share of what that trade brought back. A side's grade is its value minus the other side's,
-mapped to a letter by `TRADE_GRADE_BANDS` in `assets/model.js`. Per-player weekly points are
-pulled on demand the first time someone opens the Trades page and cached for good, since a
-finished season never changes.
+Every trade is measured three ways, the same three the site this was modelled on uses:
+
+1. **Value at trade**: what each side received, at market value the week the trade went
+   through (DynastyProcess's weekly trade values, built from FantasyPros rankings).
+2. **Value change**: how those values moved afterwards, to this week for the live season and
+   to the end of the season for past ones.
+3. **Starter points**: what the players scored in the receiving team's starting lineup, from
+   the trade until they left that roster. Bench points don't count; playoff weeks count while
+   the team was still playing for the title or third place.
+
+Finished seasons are graded on starter points; the live season is graded on current market
+value until it ends. The gap between the two sides maps to Even, Slight Edge, Good Win,
+Clear Win or Fleece (and the matching loss on the other side). The cut-offs are
+`TRADE_BANDS` in `assets/grades.js`. FAAB is shown but not valued.
+
+Waiver pickups are graded on the starter points they produced for you against the FAAB paid
+(`waiverTier` in `assets/grades.js`). Draft picks are graded in hindsight: points over a
+replacement-level player at the position, against what that draft slot usually returns in
+this league (`DRAFT_BANDS`).
+
+### Market values
+
+DynastyProcess publishes new values every week. The site reads this week's file straight
+from GitHub, and `assets/values-history.json` holds every in-season week back to 2022 so a
+trade can be priced the week it happened. Trades made after that file was built look up
+their week on GitHub automatically and remember it, so the file never has to be updated.
+If you ever want to refresh it anyway (once a season is plenty), run
+`python3 tools/build_values.py` and commit the result. The values are dynasty values, so
+young players carry a premium a redraft league wouldn't pay; that's why finished seasons are
+graded on points instead.
+
+### Live scores and "is this week over?"
+
+History is cached for 3 hours, but the live season is re-pulled in the background on every
+visit after 3 minutes, so scores stay current. Sleeper's own week counter can lag a full day
+behind Monday night; the site also reads Sleeper's NFL schedule, which marks every game
+`complete`, and treats a week as final the moment its last game ends. The same schedule tells
+the win odds which players are still playing.
 
 Results are cached in your browser for 3 hours so repeat visits load instantly. The
-**Force refresh data** link in the footer clears that cache.
+**refresh** button at the top right clears that cache.
 
 ## Changing things
 
@@ -285,10 +342,11 @@ Results are cached in your browser for 3 hours so repeat visits load instantly. 
 | Colors, fonts, spacing | the `:root` variables at the top of `assets/style.css` |
 | League ID (if you ever start a fresh league) | `CONFIG.leagueId` at the top of `assets/app.js` |
 | How long data is cached | `CONFIG.cacheHours` in `assets/app.js` |
-| Page order in the nav | the `<nav>` block in `index.html` |
+| Page order in the nav | the sidebar `<nav>` block in `index.html` |
 
-Each page is a function in the `views` object in `app.js` that returns HTML. To add a
-page, write `views.myPage = () => '...'` and add a matching `<a href="#/myPage">` link.
+Each page is a function in the `views` object (in one of the `views-*.js` files) that returns
+HTML. To add a page, write `views.myPage = () => '...'`, add a matching
+`<a class="nav-link" href="#/myPage" data-route="myPage">` link and a title in `TITLES`.
 
 ## Notes and limits
 

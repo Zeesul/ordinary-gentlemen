@@ -6,12 +6,25 @@
 const CONFIG = {
   leagueId: '1353221128079839232',
   api: 'https://api.sleeper.app/v1',
-  cacheKey: 'log_site_data_v8',
-  playerKey: 'log_players_v1',
-  txnKey: 'log_txn_v1_',
+  // v9: every season now keeps its weekly lineups (starters + every
+  // rostered player's points), which efficiency, trade and waiver grades need.
+  cacheKey: 'log_site_data_v9',
+  playerKey: 'log_players_v2',
+  txnKey: 'log_txn_v2_',
   projKey: 'log_proj_v1_',
-  ptsKey: 'log_ppts_v1_',
+  valuesLiveKey: 'log_values_live_v1',
+  valuesSnapKey: 'log_values_snap_v1_',
+  viewerKey: 'log_viewer',
   projApi: 'https://api.sleeper.app',
+  // DynastyProcess publishes weekly FantasyPros-based trade values on GitHub.
+  // assets/values-history.json holds every in-season week back to 2022; the
+  // current week is read live, and anything in between is looked up by date.
+  valuesHistory: 'assets/values-history.json',
+  valuesLive: 'https://raw.githubusercontent.com/dynastyprocess/data/master/files/values-players.csv',
+  valuesRaw: 'https://raw.githubusercontent.com/dynastyprocess/data/',
+  valuesCommits: 'https://api.github.com/repos/dynastyprocess/data/commits?path=files/values-players.csv&per_page=1&until=',
+  valuesLiveHours: 12,
+  liveMins: 3,            // a live season's scores are re-pulled after this long
   projCacheMins: 60,
   cacheHours: 3,
   playerCacheDays: 7,
@@ -46,10 +59,25 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const n0 = v => Math.round(v).toLocaleString();
 const n1 = v => (Math.round(v * 10) / 10).toFixed(1);
 const n2 = v => (Math.round(v * 100) / 100).toFixed(2);
 const pct = v => (v * 100).toFixed(1) + '%';
+const pct0 = v => Math.round(v * 100) + '%';
+const signed = (v, f) => (v > 0 ? '+' : v < 0 ? '-' : '') + (f || n1)(Math.abs(v));
 const range = (a, b) => (b < a ? [] : Array.from({ length: b - a + 1 }, (_, i) => a + i));
+const sum = arr => arr.reduce((a, b) => a + b, 0);
+const mean = arr => arr.length ? sum(arr) / arr.length : 0;
+const stdev = arr => {
+  if (arr.length < 2) return 0;
+  const m = mean(arr);
+  return Math.sqrt(sum(arr.map(x => (x - m) * (x - m))) / (arr.length - 1));
+};
+const median = arr => {
+  if (!arr.length) return 0;
+  const s = arr.slice().sort((a, b) => a - b), h = s.length >> 1;
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+};
 const ordinal = i => {
   const s = ['th', 'st', 'nd', 'rd'], v = i % 100;
   return i + (s[(v - 20) % 10] || s[v] || s[0]);
@@ -58,8 +86,11 @@ const fmtDate = ms => {
   const d = new Date(ms);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
+const fmtMonth = ms => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+/** UTC calendar date of a timestamp, the way DynastyProcess dates its files. */
+const isoDay = ms => new Date(ms).toISOString().slice(0, 10);
 
-/** "2h ago" / "3d ago" style relative time, for the homepage activity feed. */
+/** "2h ago" / "3d ago" style relative time. */
 const timeAgo = ms => {
   const mins = Math.round((Date.now() - ms) / 60000);
   if (mins < 1) return 'just now';
@@ -77,6 +108,33 @@ function todayISO() {
   return d.getFullYear() + '-' +
     String(d.getMonth() + 1).padStart(2, '0') + '-' +
     String(d.getDate()).padStart(2, '0');
+}
+
+/** Standard normal CDF (Abramowitz & Stegun 7.1.26), for win probabilities. */
+function normCdf(z) {
+  const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t +
+    0.254829592) * t * Math.exp(-z * z / 2);
+  return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+}
+
+/** Small seeded PRNG, so a simulation gives the same answer on every reload. */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function safeGet(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return null; }
+}
+function safeSet(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (_) { return false; }
 }
 
 /** Run an async fn over items with limited concurrency. */
@@ -146,6 +204,8 @@ function avatarURL(user) {
   return 'https://sleepercdn.com/images/v2/icons/player_default.webp';
 }
 
+const r2 = v => Math.round((v || 0) * 100) / 100;
+
 async function loadSeason(lg) {
   const id = lg.league_id;
   const st = lg.settings || {};
@@ -183,6 +243,7 @@ async function loadSeason(lg) {
       ties: s.ties || 0,
       pf: (s.fpts || 0) + (s.fpts_decimal || 0) / 100,
       pa: (s.fpts_against || 0) + (s.fpts_against_decimal || 0) / 100,
+      ppts: (s.ppts || 0) + (s.ppts_decimal || 0) / 100,
       moves: s.total_moves || 0,
       waiverUsed: s.waiver_budget_used || 0,
       players: r.players || [],
@@ -202,11 +263,12 @@ async function loadSeason(lg) {
   // ahead. `games` stays results-only: the record book and head-to-head
   // must never see a matchup that hasn't happened.
   const pairings = {};   // { week: [{ week, a, ap, b, bp, played }] }
-  // Per-week lineups, kept only while a season is live — that's the only time
-  // anything asks who is actually starting. Finished seasons skip it so the
-  // cached payload doesn't carry five years of dead lineup data.
-  const lineups = {};    // { week: { rosterId: { starters, startersPoints, points } } }
-  const keepLineups = lg.status !== 'complete';
+  /* Per-week lineups for every season:
+       lineups[week][rosterId] = { st: starters, sp: starter points,
+                                   pp: { playerId: points } for the whole roster }
+     Efficiency (best possible lineup), trade grades (points a player scored
+     in your starting lineup) and waiver grades all read from this. */
+  const lineups = {};
   if (started && lastLeg >= 1) {
     const weeks = range(1, lastLeg);
     const results = await pool(weeks, CONFIG.concurrency, async w => {
@@ -243,27 +305,29 @@ async function loadSeason(lg) {
       });
       if (wkPairs.length) pairings[week] = wkPairs;
 
-      if (keepLineups) {
-        const byRoster = {};
-        data.forEach(m => {
-          let starters = m.starters;
-          let startersPoints = m.starters_points;
-          if (!starters || !starters.length) {
-            const r = rosterById[m.roster_id];
-            if (r && r.starters && r.starters.length) {
-              const pts = m.players_points || {};
-              starters = r.starters;
-              startersPoints = starters.map(pid => pts[pid] || 0);
-            }
+      const byRoster = {};
+      data.forEach(m => {
+        const pp = {};
+        Object.keys(m.players_points || {}).forEach(pid => { pp[pid] = r2(m.players_points[pid]); });
+        let starters = m.starters;
+        let startersPoints = m.starters_points;
+        // A week's matchup snapshot can come back with starters: null while the
+        // roster's own lineup is fully set (see sleeper-api-gotchas #5). Fall
+        // back to the roster's current starters, priced from this week.
+        if (!starters || !starters.length) {
+          const r = rosterById[m.roster_id];
+          if (r && r.starters && r.starters.length) {
+            starters = r.starters;
+            startersPoints = starters.map(pid => pp[pid] || 0);
           }
-          byRoster[m.roster_id] = {
-            starters: starters || [],
-            startersPoints: startersPoints || [],
-            points: m.points || 0
-          };
-        });
-        lineups[week] = byRoster;
-      }
+        }
+        byRoster[m.roster_id] = {
+          st: starters || [],
+          sp: (startersPoints || []).map(r2),
+          pp
+        };
+      });
+      lineups[week] = byRoster;
     });
   } else {
     boot.tick(Math.max(lastLeg, 0));
@@ -277,6 +341,7 @@ async function loadSeason(lg) {
   };
   const final = bracketPick(wb, 1);
   const third = bracketPick(wb, 3);
+  const fifth = bracketPick(wb, 5);
   const toilet = bracketPick(lb, 1);
 
   let championRoster = final ? final.w : null;
@@ -390,6 +455,8 @@ async function loadSeason(lg) {
     playoffsUnderway,
     rosterPositions: Array.isArray(lg.roster_positions) ? lg.roster_positions : [],
     playoffTeams: st.playoff_teams || 6,
+    waiverBudget: st.waiver_budget || 0,
+    lastScored: st.last_scored_leg || 0,
     lastLeg,
     teams, games, scores, pairings, lineups, draft,
     winnersBracket: Array.isArray(wb) ? wb : [],
@@ -397,6 +464,9 @@ async function loadSeason(lg) {
     championRoster,
     runnerUpRoster: final ? final.l : null,
     thirdRoster: third ? third.w : null,
+    fourthRoster: third ? third.l : null,
+    fifthRoster: fifth ? fifth.w : null,
+    sixthRoster: fifth ? fifth.l : null,
     // Winner of the losers bracket final = consolation champion.
     // Last place is NOT taken from this bracket: its placings depend on
     // league config and routinely disagree with the actual worst record.
@@ -404,6 +474,45 @@ async function loadSeason(lg) {
     consolationRoster: toilet ? toilet.w : null,
     playoffRosters: Array.from(playoffRosters)
   };
+}
+
+/* ------------------------------------------------------------------
+   NFL schedule with each game's status (pre_game / in_game / complete).
+   Sleeper's own week counter can lag a full day behind the last game of
+   the week (sleeper-api-gotchas #3); the schedule says exactly when every
+   game of a week is over, and which players are still playing.
+   ------------------------------------------------------------------ */
+async function loadSchedule(season) {
+  try {
+    const res = await fetch(`${CONFIG.projApi}/schedule/nfl/regular/${season}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const list = await res.json();
+    if (!Array.isArray(list)) return null;
+    return {
+      season: String(season),
+      games: list.map(g => ({ week: g.week, home: g.home, away: g.away, status: g.status, date: g.date }))
+    };
+  } catch (_) { return null; }
+}
+
+/** Re-pull just the live season (scores, lineups, schedule). */
+async function refreshLive(raw) {
+  const i = raw.seasons.findIndex(s => s.inProgress);
+  if (i < 0) return null;
+  const old = raw.seasons[i];
+  const [lg, nflState, schedule] = await Promise.all([
+    getJSON('/league/' + old.leagueId).catch(() => null),
+    getJSON('/state/nfl').catch(() => null),
+    loadSchedule(old.season)
+  ]);
+  if (!lg) return null;
+  raw.seasons[i] = await loadSeason(lg);
+  if (nflState) raw.nflState = nflState;
+  if (schedule) raw.schedule = schedule;
+  raw.liveAt = Date.now();
+  // the live season's transactions are re-read too
+  delete TXN_MEMO[old.leagueId];
+  return raw;
 }
 
 async function loadEverything() {
@@ -414,59 +523,69 @@ async function loadEverything() {
     loadLeagueChain(),
     getJSON('/state/nfl').catch(() => null)
   ]);
-  boot.plan(chain.length * 20);
+  boot.plan(chain.length * 21 + 2);
+  // The player list (names and positions) loads alongside the seasons. It is
+  // cached for a week, so most visits skip it entirely.
+  const playersP = loadPlayers().catch(err => { console.warn('[players]', err); return null; })
+    .then(p => { boot.tick(2); return p; });
   const seasons = [];
   for (const lg of chain) {
     boot.say(`Loading the ${lg.season} season…`);
     seasons.push(await loadSeason(lg));
   }
+  const live = seasons.find(s => s.inProgress);
+  const schedule = live ? await loadSchedule(live.season) : null;
+  boot.say('Loading player names…');
+  await playersP;
   return {
-    fetchedAt: Date.now(), nflState,
-    leagueName: chain[0] ? chain[0].name : 'The League', seasons
+    fetchedAt: Date.now(), liveAt: Date.now(), nflState, schedule,
+    leagueName: chain[chain.length - 1] ? chain[chain.length - 1].name : 'The League', seasons
   };
 }
 
 /* ------------------------------------------------------------------
-   Player name lookup — only downloaded when a page actually needs it
-   (the Trades page). Trimmed hard before caching so it fits happily
-   in localStorage.
+   Player list — names, positions and NFL teams for every player id.
+   Sleeper's full dictionary is several megabytes, so it is trimmed to
+   [name, position, team] before caching, and kept for a week.
    ------------------------------------------------------------------ */
 let PLAYERS = null;
 
 async function loadPlayers() {
   if (PLAYERS) return PLAYERS;
-
-  try {
-    const hit = JSON.parse(localStorage.getItem(CONFIG.playerKey) || 'null');
-    if (hit && hit.ts && Date.now() - hit.ts < CONFIG.playerCacheDays * 864e5 && hit.p) {
-      PLAYERS = hit.p;
-      return PLAYERS;
-    }
-  } catch (_) { /* ignore */ }
-
+  const hit = safeGet(CONFIG.playerKey);
+  if (hit && hit.ts && Date.now() - hit.ts < CONFIG.playerCacheDays * 864e5 && hit.p) {
+    PLAYERS = hit.p;
+    return PLAYERS;
+  }
   const raw = await getJSON('/players/nfl');
   const slim = {};
   Object.keys(raw || {}).forEach(id => {
     const p = raw[id];
     if (!p) return;
+    const pos = p.position || (Array.isArray(p.fantasy_positions) ? p.fantasy_positions[0] : '') || '';
+    // only fantasy-relevant positions; the rest is several thousand linemen
+    if (['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'FB'].indexOf(pos) === -1) return;
     const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') ||
       p.last_name || id;
-    slim[id] = [name, p.position || '', p.team || ''];
+    slim[id] = [name, pos === 'FB' ? 'RB' : pos, p.team || ''];
   });
   PLAYERS = slim;
-  try {
-    localStorage.setItem(CONFIG.playerKey, JSON.stringify({ ts: Date.now(), p: slim }));
-  } catch (_) { /* over quota — fine, we just refetch next visit */ }
+  // drop older shapes of this cache
+  try { localStorage.removeItem('log_players_v1'); } catch (_) { /* ignore */ }
+  safeSet(CONFIG.playerKey, { ts: Date.now(), p: slim });
   return PLAYERS;
 }
 
 function playerName(id) {
-  if (!PLAYERS || !PLAYERS[id]) return String(id);
+  if (!PLAYERS || !PLAYERS[id]) return /^\d+$/.test(String(id)) ? 'Player ' + id : String(id);
   return PLAYERS[id][0];
 }
 function playerMeta(id) {
   const p = PLAYERS && PLAYERS[id];
-  return p ? { name: p[0], pos: p[1], team: p[2] } : { name: String(id), pos: '', team: '' };
+  if (p) return { name: p[0], pos: p[1], team: p[2] };
+  // team defenses are keyed by their abbreviation
+  if (id && !/^\d+$/.test(String(id))) return { name: String(id) + ' D/ST', pos: 'DEF', team: String(id) };
+  return { name: 'Player ' + id, pos: '', team: '' };
 }
 
 /* ------------------------------------------------------------------
@@ -474,9 +593,7 @@ function playerMeta(id) {
 
    Sleeper's projections feed is undocumented but public, and it carries
    far more than points: every record has the player's name, position,
-   NFL team and injury status. That makes it a complete lookup for
-   anything currently rostered or traded, so the roster and transaction
-   panels never have to pull the ~10MB /players/nfl dictionary.
+   NFL team and injury status.
 
    The response is ~2MB, so it is trimmed to the fields the site uses
    before being cached, and refetched hourly while a week is live.
@@ -489,13 +606,11 @@ async function loadProjections(season, week) {
   if (PROJ_MEMO[memoKey]) return PROJ_MEMO[memoKey];
 
   const key = CONFIG.projKey + season + '_' + week;
-  try {
-    const hit = JSON.parse(localStorage.getItem(key) || 'null');
-    if (hit && hit.ts && hit.p && Date.now() - hit.ts < CONFIG.projCacheMins * 60000) {
-      PROJ_MEMO[memoKey] = hit.p;
-      return hit.p;
-    }
-  } catch (_) { /* ignore */ }
+  const hit = safeGet(key);
+  if (hit && hit.ts && hit.p && Date.now() - hit.ts < CONFIG.projCacheMins * 60000) {
+    PROJ_MEMO[memoKey] = hit.p;
+    return hit.p;
+  }
 
   const qs = PROJ_POSITIONS.map(p => 'position[]=' + p).join('&');
   let raw = null;
@@ -536,31 +651,34 @@ async function loadProjections(season, week) {
     Object.keys(localStorage).forEach(k => {
       if (k.indexOf(CONFIG.projKey) === 0 && k !== key) localStorage.removeItem(k);
     });
-    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), p: map }));
-  } catch (_) { /* over quota — the in-memory copy still serves this visit */ }
+  } catch (_) { /* ignore */ }
+  safeSet(key, { ts: Date.now(), p: map });
   return map;
 }
 
 /** Name/position/team for a player id, from whichever lookup we have. */
 function projMeta(proj, pid) {
   const i = proj && proj[pid];
-  if (i) return i;
-  const m = typeof playerMeta === 'function' ? playerMeta(pid) : null;
-  return m ? { name: m.name, pos: m.pos, team: m.team, inj: '', proj: null, date: '' }
-    : { name: String(pid), pos: '', team: '', inj: '', proj: null, date: '' };
+  const m = playerMeta(pid);
+  if (i) return Object.assign({}, i, { name: i.name || m.name, pos: i.pos || m.pos, team: i.team || m.team });
+  return { name: m.name, pos: m.pos, team: m.team, inj: '', proj: null, date: '' };
 }
 
 /* ------------------------------------------------------------------
-   Transactions — also loaded on demand, one season at a time.
+   Transactions — loaded on demand, one season at a time.
    ------------------------------------------------------------------ */
+const TXN_MEMO = {};
+
 async function loadTransactions(season) {
+  if (TXN_MEMO[season.leagueId]) return TXN_MEMO[season.leagueId];
   const key = CONFIG.txnKey + season.leagueId;
-  try {
-    const hit = JSON.parse(localStorage.getItem(key) || 'null');
-    // A finished season never changes. A live one is re-pulled every half
-    // hour so a trade made this afternoon shows up in Recent Activity today.
-    if (hit && hit.ts && (season.complete || Date.now() - hit.ts < 30 * 60e3)) return hit.t;
-  } catch (_) { /* ignore */ }
+  const hit = safeGet(key);
+  // A finished season never changes. A live one is re-pulled every half
+  // hour so a trade made this afternoon shows up today.
+  if (hit && hit.ts && (season.complete || Date.now() - hit.ts < 30 * 60e3)) {
+    TXN_MEMO[season.leagueId] = hit.t;
+    return hit.t;
+  }
 
   const weeks = range(1, Math.max(season.lastLeg, 17));
   const chunks = await pool(weeks, CONFIG.concurrency, w =>
@@ -586,76 +704,214 @@ async function loadTransactions(season) {
     });
   });
   all.sort((a, b) => b.created - a.created);
-
-  try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), t: all })); }
-  catch (_) { /* ignore */ }
+  TXN_MEMO[season.leagueId] = all;
+  safeSet(key, { ts: Date.now(), t: all });
   return all;
 }
 
+/** Every started season's transactions, oldest season first. */
+async function loadAllTransactions() {
+  const list = MODEL.seasons.filter(s => s.started);
+  const out = await pool(list, 2, s => loadTransactions(s).catch(() => []));
+  const map = {};
+  list.forEach((s, i) => { map[s.season] = out[i] || []; });
+  return map;
+}
+
 /* ------------------------------------------------------------------
-   Per-player weekly points — on demand, for trade grades.
+   Market values (DynastyProcess), for trade grades and roster values.
 
-   The main load keeps team scores only. Grading a trade needs to know
-   what each traded player scored, week by week, and for which roster, so
-   this pulls every week's matchups once and keeps just
-   { week: { rosterId: { playerId: points } } }. Only finished seasons are
-   graded, and a finished season never changes, so it's cached for good.
+   VALUES.history  weekly snapshots shipped with the site
+   VALUES.extra    snapshots fetched at runtime for dates newer than that
+   VALUES.live     this week's values, read straight from DynastyProcess
    ------------------------------------------------------------------ */
-const PTS_MEMO = {};
+const VALUES = { history: null, extra: [], live: null, ready: null };
 
-async function loadPlayerWeeks(season) {
-  if (PTS_MEMO[season.leagueId]) return PTS_MEMO[season.leagueId];
-  const key = CONFIG.ptsKey + season.leagueId;
-  try {
-    const hit = JSON.parse(localStorage.getItem(key) || 'null');
-    if (hit && hit.w) { PTS_MEMO[season.leagueId] = hit.w; return hit.w; }
-  } catch (_) { /* ignore */ }
-
-  const weeks = range(1, season.lastLeg);
-  const chunks = await pool(weeks, CONFIG.concurrency, w =>
-    getJSON(`/league/${season.leagueId}/matchups/${w}`).catch(() => null));
-  const out = {};
-  let failed = false;
-  chunks.forEach((data, i) => {
-    if (!Array.isArray(data)) { failed = true; return; }
-    const wk = {};
-    data.forEach(m => {
-      const pts = {};
-      Object.keys(m.players_points || {}).forEach(pid => {
-        pts[pid] = Math.round((m.players_points[pid] || 0) * 100) / 100;
-      });
-      wk[m.roster_id] = pts;
-    });
-    out[weeks[i]] = wk;
+function parseValuesCsv(text, fpMap) {
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return { date: '', v: {}, names: {} };
+  const head = lines[0].split(',').map(h => h.replace(/"/g, ''));
+  const ix = k => head.indexOf(k);
+  const iName = ix('player'), iPos = ix('pos'), iVal = ix('value_1qb'), iDate = ix('scrape_date'), iFp = ix('fp_id');
+  const v = {}, unmatched = [];
+  let date = '';
+  lines.slice(1).forEach(line => {
+    // fields can contain commas inside quotes (names like "Smith, Jr.")
+    const cells = [];
+    let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') q = !q;
+      else if (c === ',' && !q) { cells.push(cur); cur = ''; }
+      else cur += c;
+    }
+    cells.push(cur);
+    const val = Number(cells[iVal]) || 0;
+    if (!date && cells[iDate]) date = cells[iDate];
+    if (val <= 0) return;
+    const sid = fpMap[cells[iFp]];
+    if (sid) v[sid] = val;
+    else unmatched.push({ name: cells[iName], pos: cells[iPos], val });
   });
-  PTS_MEMO[season.leagueId] = out;
-  // Never cache a partial pull: a missing week would quietly zero out
-  // whoever was traded that week, for good.
-  if (!failed && season.complete) {
-    try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), w: out })); }
-    catch (_) { /* over quota — refetched next visit */ }
+  // Players newer than the shipped id map (next year's rookies) are matched
+  // by name and position against Sleeper's player list.
+  if (unmatched.length && PLAYERS) {
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '').replace(/(jr|sr|ii|iii|iv)$/, '');
+    const byName = {};
+    Object.keys(PLAYERS).forEach(id => {
+      const p = PLAYERS[id];
+      byName[norm(p[0]) + '|' + p[1]] = id;
+    });
+    unmatched.forEach(u => {
+      const id = byName[norm(u.name) + '|' + u.pos];
+      if (id && !v[id]) v[id] = u.val;
+    });
   }
+  return { date, v };
+}
+
+async function loadValues() {
+  if (VALUES.ready) return VALUES.ready;
+  VALUES.ready = (async () => {
+    try {
+      const res = await fetch(CONFIG.valuesHistory);
+      if (res.ok) VALUES.history = await res.json();
+    } catch (err) { console.warn('[values] history', err); }
+    const fpMap = (VALUES.history && VALUES.history.fp) || {};
+
+    const hit = safeGet(CONFIG.valuesLiveKey);
+    if (hit && hit.ts && Date.now() - hit.ts < CONFIG.valuesLiveHours * 3600e3 && hit.v) {
+      VALUES.live = { date: hit.date, v: hit.v };
+    } else {
+      try {
+        const res = await fetch(CONFIG.valuesLive, { cache: 'no-store' });
+        if (res.ok) {
+          VALUES.live = parseValuesCsv(await res.text(), fpMap);
+          safeSet(CONFIG.valuesLiveKey, { ts: Date.now(), date: VALUES.live.date, v: VALUES.live.v });
+        }
+      } catch (err) { console.warn('[values] live', err); }
+    }
+    // runtime snapshots fetched on an earlier visit
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.indexOf(CONFIG.valuesSnapKey) !== 0) return;
+        const s = safeGet(k);
+        if (s && s.date && s.v) VALUES.extra.push(s);
+      });
+    } catch (_) { /* ignore */ }
+    return VALUES;
+  })();
+  return VALUES.ready;
+}
+
+function valueSnapshots() {
+  const out = [];
+  const H = VALUES.history;
+  if (H) H.dates.forEach((d, i) => out.push({ date: d, i }));
+  VALUES.extra.forEach(s => out.push({ date: s.date, snap: s }));
+  if (VALUES.live && VALUES.live.date) out.push({ date: VALUES.live.date, snap: VALUES.live });
+  out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   return out;
+}
+
+/** A player's value in one snapshot. */
+function snapValue(s, pid) {
+  if (!s) return 0;
+  if (s.snap) return s.snap.v[pid] || 0;
+  const H = VALUES.history;
+  const arr = H && H.v[pid];
+  return arr ? (arr[s.i] || 0) * (H.scale || 1) : 0;
+}
+
+/** Latest snapshot on or before a date (YYYY-MM-DD). */
+function snapshotOn(date) {
+  const list = valueSnapshots();
+  let pick = null;
+  list.forEach(s => { if (s.date <= date) pick = s; });
+  return pick || list[0] || null;
+}
+
+/** First snapshot on or after a date. */
+function snapshotAfter(date) {
+  const list = valueSnapshots();
+  return list.find(s => s.date >= date) || list[list.length - 1] || null;
+}
+
+const valueOn = (pid, date) => snapValue(snapshotOn(date), pid);
+const valueNow = pid => VALUES.live ? (VALUES.live.v[pid] || 0)
+  : snapValue(valueSnapshots().slice(-1)[0], pid);
+
+/** The season's closing value: the first snapshot after its championship week. */
+function seasonEndDate(season) {
+  return (Number(season) + 1) + '-01-08';
+}
+
+/**
+ * Make sure there is a snapshot close to each of these dates. Dates newer
+ * than the shipped history (trades from the last few weeks) are looked up on
+ * GitHub, once, and remembered for good: a week's values never change.
+ */
+async function ensureSnapshots(dates) {
+  await loadValues();
+  const H = VALUES.history;
+  const last = H && H.dates.length ? H.dates[H.dates.length - 1] : '0000';
+  const liveDate = VALUES.live && VALUES.live.date;
+  const need = Array.from(new Set(dates.filter(d => d > last && (!liveDate || d < liveDate))));
+  const have = new Set(VALUES.extra.map(s => s.date));
+  const fpMap = (H && H.fp) || {};
+  for (const d of need.slice(0, 6)) {
+    // already have the snapshot that was current on that date?
+    const s = snapshotOn(d);
+    if (s && s.date > last && (!liveDate || s.date !== liveDate)) continue;
+    try {
+      const res = await fetch(CONFIG.valuesCommits + d + 'T23:59:59Z');
+      if (!res.ok) break;                           // rate limited: use what we have
+      const list = await res.json();
+      const c = Array.isArray(list) && list[0];
+      if (!c) continue;
+      const cDate = (c.commit && c.commit.committer && c.commit.committer.date || '').slice(0, 10);
+      if (!cDate || cDate <= last || have.has(cDate)) continue;
+      const raw = await fetch(CONFIG.valuesRaw + c.sha + '/files/values-players.csv');
+      if (!raw.ok) continue;
+      const parsed = parseValuesCsv(await raw.text(), fpMap);
+      const snap = { date: parsed.date || cDate, v: parsed.v };
+      VALUES.extra.push(snap);
+      have.add(snap.date);
+      safeSet(CONFIG.valuesSnapKey + snap.date, snap);
+    } catch (err) { console.warn('[values] snapshot', d, err); break; }
+  }
+}
+
+/* ------------------------------------------------------------------
+   Who's looking. Picking yourself in the sidebar highlights you in
+   every table and adds "your" numbers. It lives only in this browser.
+   ------------------------------------------------------------------ */
+function getViewer() {
+  try { return localStorage.getItem(CONFIG.viewerKey) || ''; } catch (_) { return ''; }
+}
+function setViewer(id) {
+  try {
+    if (id) localStorage.setItem(CONFIG.viewerKey, id);
+    else localStorage.removeItem(CONFIG.viewerKey);
+  } catch (_) { /* private mode: lasts for this visit only */ }
+  setViewer.mem = id;
 }
 
 /* ------------------------------------------------------------------
    Cache for the main dataset
    ------------------------------------------------------------------ */
 function readCache() {
-  try {
-    const hit = JSON.parse(localStorage.getItem(CONFIG.cacheKey) || 'null');
-    if (!hit || !hit.fetchedAt) return null;
-    if (Date.now() - hit.fetchedAt > CONFIG.cacheHours * 3600e3) return null;
-    // Age is not enough. A cache written by an older build can be perfectly
-    // fresh and still be missing fields this build needs, which fails silently
-    // as empty tables rather than as an error. Check the shape too — refetching
-    // costs a few seconds, rendering a half-empty page costs trust.
-    if (!cacheShapeOK(hit)) {
-      console.warn('[cache] shape is from an older build — refetching');
-      return null;
-    }
-    return hit;
-  } catch (_) { return null; }
+  const hit = safeGet(CONFIG.cacheKey);
+  if (!hit || !hit.fetchedAt) return null;
+  if (Date.now() - hit.fetchedAt > CONFIG.cacheHours * 3600e3) return null;
+  // Age is not enough. A cache written by an older build can be perfectly
+  // fresh and still be missing fields this build needs, which fails silently
+  // as empty tables rather than as an error. Check the shape too.
+  if (!cacheShapeOK(hit)) {
+    console.warn('[cache] shape is from an older build — refetching');
+    return null;
+  }
+  return hit;
 }
 
 /** Does this cached payload carry everything the current build reads? */
@@ -664,29 +920,42 @@ function cacheShapeOK(hit) {
   if (!Array.isArray(seasons) || !seasons.length) return false;
   return seasons.every(s => {
     if (!s || !Array.isArray(s.teams)) return false;
-    // roster arrays power the manager profile's roster panel
     if (s.teams.some(t => !Array.isArray(t.players) || !Array.isArray(t.starters))) return false;
     if (!s.pairings || typeof s.pairings !== 'object') return false;
-    // a live season also needs per-week lineups for matchup projections
-    if (s.inProgress && (!s.lineups || typeof s.lineups !== 'object')) return false;
+    if (!s.lineups || typeof s.lineups !== 'object') return false;
+    if (s.started && Object.keys(s.scores || {}).length &&
+        !Object.values(s.lineups).some(w => Object.values(w).some(x => x && x.pp))) return false;
     return true;
   });
 }
 
 function writeCache(raw) {
+  const slim = {
+    fetchedAt: raw.fetchedAt,
+    liveAt: raw.liveAt || raw.fetchedAt,
+    leagueName: raw.leagueName,
+    nflState: raw.nflState || null,
+    schedule: raw.schedule || null,
+    seasons: raw.seasons.map(s => Object.assign({}, s, {
+      byRoster: undefined, standings: undefined, finalGames: undefined,
+      playoffGames: undefined, stats: undefined
+    }))
+  };
+  // Older builds' copies are dead weight once the key is bumped.
   try {
-    const slim = {
-      fetchedAt: raw.fetchedAt,
-      leagueName: raw.leagueName,
-      nflState: raw.nflState || null,
-      seasons: raw.seasons.map(s => Object.assign({}, s, {
-        byRoster: undefined, standings: undefined
-      }))
-    };
-    // Older builds' copies are dead weight once the key is bumped.
     Object.keys(localStorage).forEach(k => {
       if (k.indexOf('log_site_data_') === 0 && k !== CONFIG.cacheKey) localStorage.removeItem(k);
+      if (k.indexOf('log_ppts_') === 0) localStorage.removeItem(k);   // replaced by lineups
+      if (k.indexOf('log_txn_v1_') === 0) localStorage.removeItem(k);
     });
-    localStorage.setItem(CONFIG.cacheKey, JSON.stringify(slim));
-  } catch (_) { /* quota or private mode — not fatal */ }
+  } catch (_) { /* ignore */ }
+  if (!safeSet(CONFIG.cacheKey, slim)) {
+    // Over quota: make room by dropping the biggest optional caches, then retry.
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.indexOf(CONFIG.projKey) === 0 || k.indexOf(CONFIG.txnKey) === 0) localStorage.removeItem(k);
+      });
+    } catch (_) { /* ignore */ }
+    safeSet(CONFIG.cacheKey, slim);
+  }
 }

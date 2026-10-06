@@ -33,10 +33,45 @@ function buildModel(raw) {
      letting them through gives you "lowest score ever: 0.00" and career
      records that count a half-finished week. Everything historical is built
      from `finalGames`; the live views still read `games` for current scores. */
+  /* Sleeper's week counter can sit on a week for a day after its last game
+     ends. The NFL schedule knows better: a week whose every game is complete
+     is final, whatever the counter says. */
+  const sched = raw.schedule && liveSeason && String(raw.schedule.season) === String(liveSeason.season)
+    ? raw.schedule.games : null;
+  const gameStatus = {};          // week -> { team: status }
+  let finalThrough = 0;
+  if (sched) {
+    const byWeek = {};
+    sched.forEach(g => {
+      (byWeek[g.week] = byWeek[g.week] || []).push(g);
+      const m = gameStatus[g.week] || (gameStatus[g.week] = {});
+      m[g.home] = g.status; m[g.away] = g.status;
+    });
+    for (let w = 1; byWeek[w]; w++) {
+      if (byWeek[w].every(g => g.status === 'complete' || g.status === 'canceled')) finalThrough = w;
+      else break;
+    }
+  }
+  const lastFinal = liveSeason && currentWeek ? Math.max(currentWeek - 1, Math.min(finalThrough, liveSeason.lastLeg)) : null;
+
   seasons.forEach(s => {
     s.finalGames = (s.inProgress && currentWeek)
-      ? s.games.filter(g => g.week < currentWeek)
+      ? s.games.filter(g => g.week <= lastFinal)
       : s.games;
+  });
+
+  /* A live season's records come from its finished games, not from Sleeper's
+     roster totals, which only update once Sleeper processes the week. */
+  seasons.forEach(s => {
+    if (!s.inProgress) return;
+    const by = {};
+    s.teams.forEach(t => { by[t.rosterId] = t; t.wins = 0; t.losses = 0; t.ties = 0; t.pf = 0; t.pa = 0; });
+    s.finalGames.forEach(g => {
+      const A = by[g.a], B = by[g.b];
+      if (!A || !B) return;
+      A.pf += g.ap; A.pa += g.bp; B.pf += g.bp; B.pa += g.ap;
+      if (g.ap > g.bp) { A.wins++; B.losses++; } else if (g.bp > g.ap) { B.wins++; A.losses++; } else { A.ties++; B.ties++; }
+    });
   });
 
   const played = seasons.filter(s => s.started && s.finalGames.length);
@@ -81,6 +116,27 @@ function buildModel(raw) {
     // bracket places teams by config and often disagrees with reality.
     const bottom = s.standings[s.standings.length - 1];
     s.lastPlaceRoster = s.complete && bottom ? bottom.rosterId : null;
+
+    /* Final place, 1st to last. The bracket settles 1st-6th (title game,
+       3rd-place game, 5th-place game); everyone else finishes in seed order
+       behind the playoff field. Only known once a season is over. */
+    s.teams.forEach(t => { t.finish = null; });
+    if (s.complete) {
+      const placed = [s.championRoster, s.runnerUpRoster, s.thirdRoster, s.fourthRoster,
+        s.fifthRoster, s.sixthRoster];
+      const used = new Set();
+      placed.forEach((rid, i) => {
+        if (rid == null || !s.byRoster[rid] || used.has(rid)) return;
+        s.byRoster[rid].finish = i + 1;
+        used.add(rid);
+      });
+      let next = Math.max(used.size, Math.min(s.playoffTeams, s.standings.length)) + 1;
+      s.standings.forEach(t => {
+        if (t.finish != null) return;
+        if (s.playoffRosters.includes(t.rosterId)) return;   // playoff team without a placing game
+        t.finish = next++;
+      });
+    }
   });
 
   /* ---------------- head to head + game log -------------------------- */
@@ -188,6 +244,7 @@ function buildModel(raw) {
         consolation: s.consolationRoster === t.rosterId,
         playoffs: s.playoffRosters.includes(t.rosterId),
         lastPlace: s.lastPlaceRoster === t.rosterId,
+        finish: t.finish,
         complete: s.complete
       };
       m.seasons.push(row);
@@ -418,7 +475,7 @@ function buildModel(raw) {
   return {
     fetchedAt: raw.fetchedAt,
     leagueName: raw.leagueName,
-    seasons, money, nflState, currentWeek,
+    seasons, money, nflState, currentWeek, lastFinal, gameStatus,
     completedSeasons: seasons.filter(s => s.complete),
     liveSeason,
     currentSeason: seasons[seasons.length - 1],
@@ -554,7 +611,7 @@ function computeMoney(seasons, managers, crownList) {
  * @param {object}   proj          player id -> projection record
  * @param {string}   today         YYYY-MM-DD, local
  */
-function projectSide(starters, startersPoints, proj, today) {
+function projectSide(starters, startersPoints, proj, today, status) {
   let expected = 0, remaining = 0, totalProj = 0;
   (starters || []).forEach((pid, i) => {
     if (!pid || pid === '0') return;                 // empty lineup slot
@@ -562,13 +619,26 @@ function projectSide(starters, startersPoints, proj, today) {
     const p = info && info.proj != null ? info.proj : 0;
     const actual = Number((startersPoints || [])[i]) || 0;
     totalProj += p;
-    // Someone whose game day has passed is finished even if he scored nothing;
-    // otherwise any points on the board mean he has started.
+    // The NFL schedule says whether his game is over, under way or to come.
+    const st = status && info && info.team ? status[info.team] : null;
+    if (st) {
+      if (st === 'complete' || st === 'canceled') { expected += actual; return; }
+      if (st !== 'pre_game') {
+        // mid-game: what he has, plus half of whatever his projection still owes
+        const rest = Math.max(0, p - actual) * 0.5;
+        expected += actual + rest; remaining += rest;
+        return;
+      }
+      expected += p; remaining += p;
+      return;
+    }
+    // No schedule: someone whose game day has passed is finished even if he
+    // scored nothing; otherwise any points on the board mean he has started.
     const isDone = actual > 0 || (info && info.date && info.date < today);
     if (isDone) expected += actual;
     else { expected += p; remaining += p; }
   });
-  return { expected, remaining, hasProjection: totalProj > 0 };
+  return { expected, remaining, total: totalProj, hasProjection: totalProj > 0 };
 }
 
 /* ------------------------------------------------------------------
@@ -645,225 +715,4 @@ function bracketRounds(bracket, season) {
       }))
     };
   });
-}
-
-/* ------------------------------------------------------------------
-   Trade grades
-
-   Only finished seasons are graded: a trade's grade is what actually
-   happened after it, so a live season has nothing to grade yet.
-
-   How a side is valued
-   - Each player a team received is followed week by week from the trade
-     onward, for as long as he stayed on that roster. Trade him on, drop
-     him, and he stops counting for that team.
-   - Each week he earns points over a replacement-level player at his
-     position (never below zero: a bad or injured week costs nothing,
-     because the team could start somebody else). Replacement level is
-     what the last rostered starter at that position typically scored
-     that season, so a 20-point kicker week and a 20-point running back
-     week aren't treated as equal.
-   - Regular-season weeks always count. Playoff weeks count only while the
-     team was still alive in the championship bracket.
-   - FAAB changing hands is shown but not valued. FAAB-only deals aren't
-     graded at all.
-
-   How a side is graded
-   Its value minus the average value of what the other side(s) got. That
-   difference, in replacement-adjusted points, maps to a letter. The two
-   sides of a two-team deal always mirror each other (A pairs with D-).
-   ------------------------------------------------------------------ */
-const TRADE_GRADE_BANDS = [
-  // [minimum net, winner letter, loser letter]
-  [60, 'A+', 'F'],
-  [40, 'A', 'D-'],
-  [25, 'A-', 'D'],
-  [15, 'B+', 'D+'],
-  [8, 'B', 'C-'],
-  [3, 'B-', 'C+'],
-  [0, 'C', 'C']
-];
-const GRADE_POINTS = {
-  'A+': 4.3, A: 4, 'A-': 3.7, 'B+': 3.3, B: 3, 'B-': 2.7,
-  'C+': 2.3, C: 2, 'C-': 1.7, 'D+': 1.3, D: 1, 'D-': 0.7, F: 0
-};
-
-function letterFor(net) {
-  const a = Math.abs(net);
-  const band = TRADE_GRADE_BANDS.find(b => a >= b[0]) || TRADE_GRADE_BANDS[TRADE_GRADE_BANDS.length - 1];
-  return net >= 0 ? (a < 3 ? 'C' : band[1]) : (a < 3 ? 'C' : band[2]);
-}
-
-/** How many starters each team fields at each position, flex spots shared out. */
-function starterSlots(rosterPositions) {
-  const share = {
-    QB: { QB: 1 }, RB: { RB: 1 }, WR: { WR: 1 }, TE: { TE: 1 }, K: { K: 1 }, DEF: { DEF: 1 },
-    FLEX: { RB: 0.4, WR: 0.5, TE: 0.1 },
-    WRRB_FLEX: { RB: 0.5, WR: 0.5 },
-    REC_FLEX: { WR: 0.8, TE: 0.2 },
-    SUPER_FLEX: { QB: 0.8, RB: 0.1, WR: 0.1 }
-  };
-  const slots = {};
-  (rosterPositions || []).forEach(p => {
-    const s = share[p];
-    if (!s) return;
-    Object.keys(s).forEach(k => { slots[k] = (slots[k] || 0) + s[k]; });
-  });
-  return slots;
-}
-
-/**
- * @param {object} s            a finished season
- * @param {object[]} txns       loadTransactions(s)
- * @param {object} weeksPts     loadPlayerWeeks(s): { week: { rosterId: { pid: pts } } }
- * @param {function} posOf      player id -> position
- */
-function gradeSeasonTrades(s, txns, weeksPts, posOf) {
-  const teams = s.numTeams || s.teams.length;
-  const regEnd = s.playoffStart - 1;
-
-  /* Replacement level per position, from the regular season: rank every
-     rostered player by his average in the weeks he actually played (byes
-     and inactive zeros left out, at least 4 games), then take the average
-     of the last starter at that spot. 12 teams starting 1 QB makes it the
-     12th-best QB's average. */
-  const slots = starterSlots(s.rosterPositions);
-  const games = {};   // pid -> [points, ...]
-  range(1, regEnd).forEach(w => {
-    const wk = weeksPts[w];
-    if (!wk) return;
-    Object.keys(wk).forEach(rid => Object.keys(wk[rid]).forEach(pid => {
-      const p = wk[rid][pid];
-      if (p !== 0) (games[pid] = games[pid] || []).push(p);
-    }));
-  });
-  const baseline = {};
-  Object.keys(slots).forEach(pos => {
-    const k = Math.max(1, Math.round(teams * slots[pos]));
-    const avgs = Object.keys(games)
-      .filter(pid => posOf(pid) === pos && games[pid].length >= 4)
-      .map(pid => games[pid].reduce((a, b) => a + b, 0) / games[pid].length)
-      .sort((a, b) => b - a);
-    baseline[pos] = avgs.length ? avgs[Math.min(k, avgs.length) - 1] : 0;
-  });
-
-  /* which rosters were still alive in the championship bracket, by week */
-  const aliveIn = {};
-  (s.winnersBracket || []).forEach(m => {
-    playoffWeeks(s, m.r).forEach(w => {
-      const set = aliveIn[w] || (aliveIn[w] = new Set());
-      // The 5th-place game pays nothing; every other bracket game is either
-      // a title shot or the paid 3rd-place game, so those weeks count.
-      if (m.p === 5) return;
-      if (typeof m.t1 === 'number') set.add(m.t1);
-      if (typeof m.t2 === 'number') set.add(m.t2);
-    });
-  });
-  const counts = (rid, w) => w <= regEnd || (aliveIn[w] && aliveIn[w].has(rid));
-
-  const follow = (pid, rid, fromWeek) => {
-    const pos = posOf(pid);
-    const base = baseline[pos] || 0;
-    let started = false, pts = 0, vor = 0, weeks = 0;
-    for (let w = fromWeek; w <= s.lastLeg; w++) {
-      const onRoster = weeksPts[w] && weeksPts[w][rid] && weeksPts[w][rid][pid] != null;
-      if (!onRoster) {
-        // the trade week's snapshot can predate the trade; allow it to miss
-        if (!started && w === fromWeek) continue;
-        break;
-      }
-      started = true;
-      if (!counts(rid, w)) continue;
-      const p = weeksPts[w][rid][pid];
-      pts += p; vor += Math.max(0, p - base); weeks++;
-    }
-    return { pid, pos, pts, vor, weeks };
-  };
-
-  /* Trade trees. A player who is flipped in a later trade carries a share
-     of what that trade brought back (split evenly over everything the team
-     sent in it), so turning one deal into a better one counts. Graded
-     newest first, so a later trade's value is known before an earlier one
-     needs it, and a chain of flips adds up all the way down. */
-  const trades = txns.filter(t => t.type === 'trade')
-    .slice().sort((a, b) => (b.created || 0) - (a.created || 0));
-  const result = {};
-  const flippedIn = (pid, rid, after) => trades
-    .filter(t2 => (t2.created || 0) > (after || 0) && t2.drops && t2.drops[pid] === rid)
-    .sort((a, b) => a.created - b.created)[0] || null;
-
-  trades.forEach(t => {
-    const rosters = t.rosters || [];
-    const sides = rosters.map(rid => {
-      const got = Object.keys(t.adds || {}).filter(pid => t.adds[pid] === rid);
-      const players = got.map(pid => {
-        const f = follow(pid, rid, t.week);
-        const t2 = flippedIn(pid, rid, t.created);
-        const g2 = t2 && result[t2.id];
-        if (g2 && g2.graded) {
-          const side2 = g2.sides.find(x => x.rosterId === rid);
-          const sent = Object.keys(t2.drops || {}).filter(x => t2.drops[x] === rid).length || 1;
-          if (side2) {
-            f.flip = { week: t2.week, value: side2.value / sent };
-            f.vor += f.flip.value;
-          }
-        }
-        return f;
-      }).sort((a, b) => b.vor - a.vor || b.pts - a.pts);
-      const team = s.byRoster[rid];
-      return {
-        rosterId: rid,
-        ownerId: team ? team.ownerId : null,
-        players,
-        faab: (t.faab || []).filter(f => f.receiver === rid).reduce((a, f) => a + (f.amount || 0), 0),
-        value: players.reduce((a, p) => a + p.vor, 0),
-        pts: players.reduce((a, p) => a + p.pts, 0)
-      };
-    });
-
-    const anyPlayers = sides.some(sd => sd.players.length);
-    const graded = anyPlayers && sides.length >= 2;
-    sides.forEach(sd => {
-      const others = sides.filter(o => o !== sd);
-      sd.net = graded ? sd.value - others.reduce((a, o) => a + o.value, 0) / others.length : 0;
-      sd.grade = graded ? letterFor(sd.net) : null;
-      sd.gpa = graded ? GRADE_POINTS[sd.grade] : null;
-    });
-    const sorted = sides.slice().sort((a, b) => b.net - a.net);
-    result[t.id] = {
-      id: t.id, season: s.season, week: t.week, created: t.created,
-      graded, sides,
-      winner: graded && sorted[0].net >= 3 ? sorted[0] : null,
-      margin: graded ? sorted[0].net - sorted[sorted.length - 1].net : 0
-    };
-  });
-  // back in the order the transactions came in (newest first)
-  return txns.filter(t => t.type === 'trade').map(t => result[t.id]);
-}
-
-/** Per-manager trade report across every graded trade. */
-function tradeReport(gradedTrades) {
-  const by = {};
-  gradedTrades.filter(t => t.graded).forEach(t => t.sides.forEach(sd => {
-    if (!sd.ownerId) return;
-    const r = by[sd.ownerId] || (by[sd.ownerId] = {
-      ownerId: sd.ownerId, trades: 0, gpaSum: 0, net: 0, won: 0, lost: 0, even: 0, best: null, worst: null
-    });
-    r.trades++; r.gpaSum += sd.gpa; r.net += sd.net;
-    if (sd.net >= 3) r.won++; else if (sd.net <= -3) r.lost++; else r.even++;
-    if (!r.best || sd.net > r.best.side.net) r.best = { trade: t, side: sd };
-    if (!r.worst || sd.net < r.worst.side.net) r.worst = { trade: t, side: sd };
-  }));
-  return Object.values(by).map(r => Object.assign(r, { gpa: r.gpaSum / r.trades }))
-    .sort((a, b) => b.gpa - a.gpa || b.net - a.net);
-}
-
-/** GPA back to the nearest letter, for a manager's overall trade grade. */
-function letterForGpa(g) {
-  let best = 'F', diff = Infinity;
-  Object.keys(GRADE_POINTS).forEach(k => {
-    const d = Math.abs(GRADE_POINTS[k] - g);
-    if (d < diff) { diff = d; best = k; }
-  });
-  return best;
 }
