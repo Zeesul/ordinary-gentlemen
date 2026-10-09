@@ -631,6 +631,7 @@ async function loadProjections(season, week) {
       pos: p.position || '',
       team: x.team || p.team || '',
       inj: p.injury_status || '',
+      opp: x.opponent || '',
       proj: pts,
       date: x.date || ''
     };

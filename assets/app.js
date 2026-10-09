@@ -128,6 +128,24 @@ function wirePage(root) {
       btn.textContent = open ? btn.dataset.less : btn.dataset.moreLabel;
     });
   });
+  // tab-style pickers that swap panels in place: a [data-pick-group=".panelClass"]
+  // container of buttons, each with data-pick="panelId". The choice is written to
+  // the URL (data-pick-param / data-pick-value) without re-rendering the page.
+  $$('[data-pick]', root).forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      const group = btn.closest('[data-pick-group]');
+      if (!group) return;
+      $$('[data-pick]', group).forEach(b => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
+      $$(group.dataset.pickGroup).forEach(p => { p.hidden = p.id !== btn.dataset.pick; });
+      if (btn.dataset.pickParam) {
+        const { route, params } = parseHash();
+        params[btn.dataset.pickParam] = btn.dataset.pickValue;
+        try { history.replaceState(null, '', hrefWith(route, params)); } catch (_) { /* ignore */ }
+      }
+    });
+  });
   // selects and checkboxes that live in the URL
   $$('select[data-param]', root).forEach(sel => {
     if (sel.dataset.wired) return;

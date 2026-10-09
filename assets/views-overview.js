@@ -50,32 +50,41 @@ function weekMatchups(s, wk, proj) {
   });
 }
 
-function matchupCard(s, m, opts) {
-  opts = opts || {};
+/**
+ * One matchup as a small scoreboard tile. With `href` it links to the This
+ * Week page; with `panel` it's a button that swaps in that matchup's
+ * head-to-head panel (see the pickers in app.js).
+ */
+function scoreTile(s, m, o) {
+  o = o || {};
   const ta = s.byRoster[m.a], tb = s.byRoster[m.b];
   if (!ta || !tb) return '';
-  const row = (t, pts, sd, p, won, lost) => `
-    <div class="mrow ${won ? 'won' : ''} ${lost ? 'lost' : ''}">
-      <div class="who">${avatar(t.ownerId)}
-        <div style="min-width:0"><div class="nm">${esc(mgr(t.ownerId).name)}${youBadge(t.ownerId)}</div>
-        <div class="mrec">${wl(t)}${p != null && !m.final && !m.decided ? ` &middot; <span class="odds"><b>${pct0(p)}</b> ${moneyline(p)}</span>` : ''}</div></div>
-      </div>
-      <div class="sc">${m.played || m.final ? `<div class="pts">${n2(pts)}</div>` : '<div class="pts dim">&mdash;</div>'}
-        ${!m.final && sd.total > 0 && sd.remaining > 0 ? `<div class="proj">proj ${n1(sd.expected)}</div>` : ''}
-        ${!m.final && sd.fallback ? `<div class="proj">avg ${n1(sd.expected)}</div>` : ''}</div>
-    </div>`;
-  const aw = m.final && m.ap > m.bp, bw = m.final && m.bp > m.ap;
-  const you = isYou(ta.ownerId) || isYou(tb.ownerId);
+  const done = m.final || m.decided;
+  const aw = done && m.ap > m.bp, bw = done && m.bp > m.ap;
+  const live = m.pA != null && !done;
+  const line = (t, pts, sd, won, lost) => `<span class="mt-line${won ? ' won' : ''}${lost ? ' lost' : ''}">
+      ${avatar(t.ownerId)}<span class="mt-nm">${esc(mgr(t.ownerId).name)}${youBadge(t.ownerId)}</span>
+      <span class="mt-pts">${m.played || m.final ? n2(pts) : `<span class="mt-proj" title="Projected">${n1(sd.expected)}</span>`}</span></span>`;
   const lead = m.sa.expected >= m.sb.expected ? ta : tb;
   const margin = Math.abs(m.sa.expected - m.sb.expected);
-  return `<div class="mcard ${you ? 'you' : ''}">
-    ${row(ta, m.ap, m.sa, m.pA, aw, bw)}
-    ${row(tb, m.bp, m.sb, m.pA == null ? null : 1 - m.pA, bw, aw)}
-    ${m.pA != null && !m.final && !m.decided ? `<div class="wp"><i class="a" style="width:${(m.pA * 100).toFixed(1)}%"></i><i class="b" style="width:${(100 - m.pA * 100).toFixed(1)}%"></i></div>` : ''}
-    <div class="mfoot"><span>${m.final || m.decided ? (m.ap !== m.bp ? `${esc(mgr((m.ap > m.bp ? ta : tb).ownerId).name)} by ${n2(Math.abs(m.ap - m.bp))}${m.decided ? ' &middot; all games over' : ''}` : 'Tie')
-      : (margin >= 0.05 ? `${esc(mgr(lead.ownerId).name)} by ${n1(margin)} projected` : 'Dead even')}</span>
-      ${opts.link ? `<a href="${opts.link}">Lineups &rarr;</a>` : ''}</div>
-  </div>`;
+  const foot = done
+    ? (m.ap === m.bp ? 'Tie' : `${m.final ? 'Final' : 'All games over'}: ${esc(mgr((m.ap > m.bp ? ta : tb).ownerId).name)} by ${n2(Math.abs(m.ap - m.bp))}`)
+    : margin >= 0.05 ? `${esc(mgr(lead.ownerId).name)} by ${n1(margin)} projected` : 'Dead even';
+  const you = isYou(ta.ownerId) || isYou(tb.ownerId);
+  const attrs = o.href ? `href="${o.href}"`
+    : `type="button" role="tab" data-pick="${o.panel}" data-pick-param="t" data-pick-value="${m.a}" aria-selected="${o.sel ? 'true' : 'false'}" aria-controls="${o.panel}"`;
+  const tag = o.href ? 'a' : 'button';
+  return `<${tag} class="mtile${you ? ' you' : ''}" ${attrs}>
+    ${line(ta, m.ap, m.sa, aw, bw)}${line(tb, m.bp, m.sb, bw, aw)}
+    ${live ? `<span class="mt-wp" title="${pct0(m.pA)} – ${pct0(1 - m.pA)} to win"><i style="width:${(m.pA * 100).toFixed(1)}%"></i></span>` : ''}
+    <span class="mt-foot">${foot}</span>
+  </${tag}>`;
+}
+
+/** Matchups with the viewer's first. */
+function viewerFirst(s, ms) {
+  const mine = m => [m.a, m.b].some(rid => s.byRoster[rid] && isYou(s.byRoster[rid].ownerId)) ? 1 : 0;
+  return ms.slice().sort((x, y) => mine(y) - mine(x));
 }
 
 /* ============================== OVERVIEW =========================== */
@@ -131,10 +140,7 @@ function liveStrip() {
   return section(`Week ${wk} <span class="tag">${done ? 'Final' : 'Live'}</span>`, deferred(id, async () => {
     const proj = await loadProjections(live.season, wk);
     const ms = weekMatchups(live, wk, proj);
-    const me = viewerId();
-    ms.sort((x, y) => (isYou(live.byRoster[y.a] && live.byRoster[y.a].ownerId) || isYou(live.byRoster[y.b] && live.byRoster[y.b].ownerId) ? 1 : 0) -
-      (isYou(live.byRoster[x.a] && live.byRoster[x.a].ownerId) || isYou(live.byRoster[x.b] && live.byRoster[x.b].ownerId) ? 1 : 0));
-    return `<div class="grid g3">${ms.map(m => matchupCard(live, m)).join('')}</div>`;
+    return `<div class="scoreboard">${viewerFirst(live, ms).map(m => scoreTile(live, m, { href: hrefWith('week', { t: m.a }) })).join('')}</div>`;
   }, `<div class="grid g3">${skeleton('Loading this week’s matchups…')}</div>`), {
     act: `<a href="#/week">Lineups and odds &rarr;</a>`, tight: true
   });
@@ -565,6 +571,126 @@ function lineupCheck(s, wk, rid, proj) {
   return html;
 }
 
+/* ------------------------------ head-to-head --------------------- */
+const INJ_SHORT = { Questionable: 'Q', Doubtful: 'D', Out: 'O', IR: 'IR', PUP: 'PUP', Sus: 'SUS', Suspended: 'SUS', NA: 'NA', COV: 'COV', DNR: 'DNR' };
+const SLOT_SHORT = { FLEX: 'FLEX', SUPER_FLEX: 'SF', WRRB_FLEX: 'W/R', REC_FLEX: 'W/T' };
+/** "B. Purdy" for the narrow layout; team defenses keep their abbreviation. */
+const shortName = (name, pid) => !/^\d+$/.test(String(pid)) ? String(pid)
+  : String(name || '').replace(/^(\S)\S*\s+/, '$1. ');
+
+/** One player's week: points, projection, and where his game stands. */
+function playerWeek(pid, pts, proj, gs, today, final) {
+  const i = projMeta(proj, pid);
+  const g = gs && i.team ? gs[i.team] : null;
+  const state = final ? 'final'
+    : g ? (g === 'complete' || g === 'canceled' ? 'final' : g === 'pre_game' ? 'pre' : 'live')
+    : (i.date && i.date < today) ? 'final' : pts > 0 ? 'live' : 'pre';
+  // with the schedule in hand, a team that isn't on it is on bye
+  const bye = !final && !!gs && !!i.team && !gs[i.team];
+  const day = state === 'pre' && i.date ? new Date(i.date + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'short' }) : '';
+  return { pid, i, pts: pts || 0, proj: i.proj, state, bye, day };
+}
+
+/** A roster's starters (slot by slot) and bench for one week. */
+function sideLineup(s, wk, rid, proj, final) {
+  const lu = (s.lineups && s.lineups[wk] && s.lineups[wk][rid]) || {};
+  const team = s.byRoster[rid];
+  const slots = lineupSlots(s);
+  const gs = weekStatus(wk), today = todayISO();
+  const st = (lu.st && lu.st.length) || final || !team ? (lu.st || []) : (team.starters || []);
+  const starters = slots.map((slot, k) => {
+    const pid = st[k];
+    return { slot, p: pid && pid !== '0' ? playerWeek(pid, Number((lu.sp || [])[k]) || 0, proj, gs, today, final) : null };
+  });
+  const on = new Set(st);
+  const ids = Object.keys(lu.pp || {}).filter(pid => !on.has(pid));
+  if (!final && team) (team.players || []).forEach(pid => { if (!on.has(pid) && ids.indexOf(pid) === -1) ids.push(pid); });
+  const bench = ids.map(pid => playerWeek(pid, (lu.pp || {})[pid] || 0, proj, gs, today, final))
+    .sort((a, b) => final ? b.pts - a.pts : (b.proj || 0) - (a.proj || 0) || b.pts - a.pts);
+  return { starters, bench };
+}
+
+function h2hPlayer(x, side, bench) {
+  if (!x) return bench ? `<div class="lu-p ${side}"></div>` : `<div class="lu-p ${side} empty"><span class="lu-nm dim">Empty</span></div>`;
+  const i = x.i;
+  const inj = i.inj ? `<span class="inj${/^(Out|IR|Doubtful|PUP|Sus)/i.test(i.inj) ? ' bad' : ''}" title="${esc(i.inj)}">${esc(INJ_SHORT[i.inj] || i.inj)}</span>` : '';
+  const game = x.state === 'live' ? '<span class="g live">Live</span>'
+    : x.state === 'final' ? '<span class="g">Final</span>'
+    : x.bye ? '<span class="g">Bye</span>'
+    : x.day ? `<span class="g">${esc(x.day)}${i.opp ? `<span class="opp"> vs ${esc(i.opp)}</span>` : ''}</span>` : '';
+  return `<div class="lu-p ${side}">
+    ${playerFace(x.pid, 32)}
+    <div class="lu-id">
+      <div class="lu-nm"><span class="full">${esc(i.name)}</span><span class="short">${esc(shortName(i.name, x.pid))}</span>${inj}</div>
+      <div class="lu-sub">${posBadge(i.pos)}${i.team && i.pos !== 'DEF' ? `<span>${esc(i.team)}</span>` : ''}${game}</div>
+    </div>
+  </div>`;
+}
+
+function h2hPoints(x, side, final, trail) {
+  if (!x) return `<div class="lu-pts ${side}"></div>`;
+  const projTxt = !final && x.proj != null && x.state !== 'final' ? `<small>${n1(x.proj)}<span class="pj"> proj</span></small>` : '';
+  return `<div class="lu-pts ${side}${trail ? ' trail' : ''}"><b>${x.state === 'pre' ? '&ndash;' : n2(x.pts)}</b>${projTxt}</div>`;
+}
+
+function h2hRow(a, b, slot, final) {
+  // once both games are over, dim the lower score so each slot reads at a glance
+  const both = a && b && a.state === 'final' && b.state === 'final' && a.pts !== b.pts;
+  const bench = slot === 'BN';      // an uneven bench just leaves the short side blank
+  return `<div class="lu-row">
+    ${h2hPlayer(a, 'a', bench)}${h2hPoints(a, 'a', final, both && a.pts < b.pts)}
+    <div class="lu-slot">${esc(SLOT_SHORT[slot] || slot)}</div>
+    ${h2hPoints(b, 'b', final, both && b.pts < a.pts)}${h2hPlayer(b, 'b', bench)}
+  </div>`;
+}
+
+/** The selected matchup: a face-off header and both lineups, slot by slot. */
+function matchupPanel(s, wk, m, proj, final, id, hidden) {
+  const ta = s.byRoster[m.a], tb = s.byRoster[m.b];
+  if (!ta || !tb) return '';
+  const A = sideLineup(s, wk, m.a, proj, final), B = sideLineup(s, wk, m.b, proj, final);
+  const done = m.final || m.decided;
+  const aw = done && m.ap > m.bp, bw = done && m.bp > m.ap;
+  const live = m.pA != null && !done;
+  const toPlay = L => L.starters.filter(x => x.p && x.p.state !== 'final').length;
+  const team = (t, side, p) => `<div class="md-team ${side}">
+      ${avatar(t.ownerId, 'av md-av')}
+      <div class="md-id"><div class="md-nm">${mgrLink(t.ownerId)}${youBadge(t.ownerId)}</div>
+        <div class="md-rec">${wl(t)}${live ? ` <span class="md-odds" title="Moneyline ${moneyline(p)}"><b>${pct0(p)}</b> to win</span>` : ''}</div></div>
+    </div>`;
+  const score = (pts, sd, side, won, lost) => `<div class="md-score ${side}${won ? ' won' : ''}${lost ? ' lost' : ''}">
+      <b>${m.played || m.final ? n2(pts) : '&ndash;'}</b>
+      <span>${m.final ? '' : sd.fallback ? `avg ${n1(sd.expected)}` : sd.remaining > 0 ? `${n1(sd.expected)} proj` : m.played ? 'done' : ''}</span>
+    </div>`;
+  const lead = m.sa.expected >= m.sb.expected ? ta : tb;
+  const margin = Math.abs(m.sa.expected - m.sb.expected);
+  const story = done
+    ? (m.ap === m.bp ? 'A tie' : `${esc(mgr((m.ap > m.bp ? ta : tb).ownerId).name)} wins by ${n2(Math.abs(m.ap - m.bp))}${m.decided ? ', all games over' : ''}`)
+    : margin >= 0.05 ? `${esc(mgr(lead.ownerId).name)} by ${n1(margin)} projected` : 'Dead even';
+  const rows = A.starters.map((x, k) => h2hRow(x.p, (B.starters[k] || {}).p, x.slot, final)).join('');
+  const nb = Math.max(A.bench.length, B.bench.length);
+  const bench = nb ? Array.from({ length: nb }, (_, k) => h2hRow(A.bench[k] || null, B.bench[k] || null, 'BN', final)).join('') : '';
+  const benchPts = L => sum(L.bench.map(x => x.pts));
+  return `<div class="mdetail${isYou(ta.ownerId) || isYou(tb.ownerId) ? ' you' : ''}" id="${id}" role="tabpanel"${hidden ? ' hidden' : ''}>
+    <div class="md-head">
+      ${team(ta, 'a', m.pA)}${score(m.ap, m.sa, 'a', aw, bw)}
+      <div class="md-vs">${done ? 'Final' : 'vs'}</div>
+      ${score(m.bp, m.sb, 'b', bw, aw)}${team(tb, 'b', m.pA == null ? null : 1 - m.pA)}
+    </div>
+    ${live ? `<div class="md-wp"><i style="width:${(m.pA * 100).toFixed(1)}%"></i></div>` : ''}
+    <div class="md-story">
+      <span>${!done && m.played ? `${toPlay(A)} yet to play` : ''}</span>
+      <strong>${story}</strong>
+      <span>${!done && m.played ? `${toPlay(B)} yet to play` : ''}</span>
+    </div>
+    <div class="h2h" role="table" aria-label="Starting lineups">${rows}</div>
+    ${bench ? `<details class="md-bench">
+      <summary>Bench${final ? ` <span class="dim">${n2(benchPts(A))} points vs ${n2(benchPts(B))}</span>` : ` <span class="dim">${A.bench.length} and ${B.bench.length} players</span>`}${CHEV}</summary>
+      <div class="h2h">${bench}</div>
+    </details>` : ''}
+  </div>`;
+}
+
 views.week = async params => {
   const live = MODEL.liveSeason;
   if (!live || !MODEL.currentWeek) {
@@ -580,47 +706,32 @@ views.week = async params => {
   const wk = params.week && weeks.indexOf(Number(params.week)) !== -1 ? Number(params.week) : cur;
   const final = weekIsFinal(live, wk);
   const proj = final ? {} : await loadProjections(live.season, wk);
-  const ms = weekMatchups(live, wk, proj);
+  const ms = viewerFirst(live, weekMatchups(live, wk, proj));
   const me = viewerId();
   const myTeam = me ? live.teams.find(t => t.ownerId === me) : null;
-  const mine = myTeam ? ms.find(m => m.a === myTeam.rosterId || m.b === myTeam.rosterId) : null;
 
-  const chips = `<div class="pills">${weeks.map(w => `<a class="pill-btn ${w === wk ? 'active' : ''}" href="${hrefWith('week', { week: w })}">Wk ${w}${
+  // The matchup on show: the team in the link (?t=), else yours, else the first.
+  const want = Number(params.t);
+  const has = rid => m => m.a === rid || m.b === rid;
+  const sel = (want && ms.find(has(want))) || (myTeam && ms.find(has(myTeam.rosterId))) || ms[0];
+
+  const chips = `<div class="pills">${weeks.map(w => `<a class="pill-btn ${w === wk ? 'active' : ''}" href="${hrefWith('week', { week: w, t: params.t })}">Wk ${w}${
     weekIsFinal(live, w) ? '' : w === cur ? ' &middot; live' : ' &middot; next'}</a>`).join('')}</div>`;
+  const tips = myTeam && !final ? lineupCheck(live, wk, myTeam.rosterId, proj) : '';
 
-  let focus = '';
-  if (mine) {
-    const meA = mine.a === myTeam.rosterId;
-    const oppRid = meA ? mine.b : mine.a;
-    const p = mine.pA == null ? null : (meA ? mine.pA : 1 - mine.pA);
-    const mySide = meA ? mine.sa : mine.sb, oppSide = meA ? mine.sb : mine.sa;
-    const opp = live.byRoster[oppRid];
-    focus = `${!final ? lineupCheck(live, wk, myTeam.rosterId, proj) : ''}
-      ${p != null && !final && !mine.decided ? `<div class="card" style="margin-bottom:14px">
-        <div class="stat-label">Win probability</div>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;gap:10px">
-          <span><strong>${esc(mgr(me).name)}</strong> <span class="blue-t strong">${pct0(p)}</span> <span class="odds">${moneyline(p)}</span></span>
-          <span><strong>${esc(mgr(opp.ownerId).name)}</strong> <span class="strong">${pct0(1 - p)}</span> <span class="odds">${moneyline(1 - p)}</span></span>
-        </div>
-        <div class="wp" style="height:8px"><i class="a" style="width:${(p * 100).toFixed(1)}%"></i><i class="b" style="width:${(100 - p * 100).toFixed(1)}%"></i></div>
-        <div class="mfoot"><span>${n1(mySide.expected)} proj</span><span>${n1(oppSide.expected)} proj</span></div>
-      </div>` : ''}
-      <div class="lineups">${lineupBlock(live, wk, myTeam.rosterId, proj, mySide, { final })}${lineupBlock(live, wk, oppRid, proj, oppSide, { final })}</div>`;
-  }
+  const board = ms.length ? `<div class="scoreboard" role="tablist" aria-label="Week ${wk} matchups" data-pick-group=".mdetail">
+      ${ms.map((m, i) => scoreTile(live, m, { panel: 'mu-' + i, sel: m === sel })).join('')}
+    </div>
+    ${ms.map((m, i) => matchupPanel(live, wk, m, proj, final, 'mu-' + i, m !== sel)).join('')}` : empty('No matchups this week.');
 
-  const others = ms.filter(m => m !== mine);
-  const around = others.map((m, i) => `<details class="tcard" ${!mine && i === 0 && !final ? '' : ''}>
-      <summary style="display:block;padding:0">${matchupCard(live, m)}</summary>
-      <div class="tcard-body"><div class="lineups">${lineupBlock(live, wk, m.a, proj, m.sa, { final })}${lineupBlock(live, wk, m.b, proj, m.sb, { final })}</div></div>
-    </details>`).join('');
-
-  const note = final ? `Final scores from Week ${wk}. Tap a matchup for both lineups.`
-    : `Scores update when you reload. Proj is Sleeper's projection for whoever hasn't played yet, added to what's already on the board.
+  const note = final ? `Final scores from Week ${wk}.`
+    : `Scores update when you reload. Projections are Sleeper's, for whoever hasn't played yet, added to what's already on the board.
        Win % treats each final score as that projection plus or minus the league's usual weekly swing (${n1(MODEL.spread)} points), narrowing as games finish.`;
 
   return `${chips}
-    ${mine ? section(`Your Matchup`, focus, { tight: true }) : (me ? '' : `<div class="note" style="margin:0 0 14px">Pick yourself under <strong>Viewing as</strong> to see your lineup, odds and lineup tips first.</div>`)}
-    ${section(mine ? 'Around the League' : `Week ${wk} Matchups`, `<div class="grid g2">${around}</div><p class="note">${note}</p>`)}
+    ${tips}
+    ${!me ? `<div class="note" style="margin:0 0 14px">Pick yourself under <strong>Viewing as</strong> to open on your matchup and get lineup tips.</div>` : ''}
+    ${section(`Week ${wk} Matchups`, `${board}<p class="note">${note}</p>`, { tight: true })}
     ${wk >= cur ? bountySection(live) : ''}
     ${section('Recent Activity', deferred('weekActivity', () => activityList(live, 8)), { act: '<a href="#/waivers">All moves &rarr;</a>' })}`;
 };

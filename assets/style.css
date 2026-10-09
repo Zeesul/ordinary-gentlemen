@@ -380,25 +380,87 @@ a.mgr-link:hover .mgr-name{color:var(--blue-soft)}
 .tsum{margin-top:12px}
 .tsum .table-wrap{background:var(--card)}
 
-/* ------------------------------ matchup cards ------------------ */
-.mcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
-.mcard.you{border-color:rgba(59,130,246,.6)}
-.mrow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:5px 0}
-.mrow .who{display:flex;align-items:center;gap:9px;min-width:0}
-.mrow .who .nm{font-weight:700;color:var(--ink-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mrow .who .mrec{font-size:11.5px;color:var(--ink-4)}
-.mrow .sc{text-align:right;font-variant-numeric:tabular-nums}
-.mrow .pts{font-size:17px;font-weight:800;color:var(--ink-strong)}
-.mrow .proj{font-size:11.5px;color:var(--ink-3)}
-.mrow.lost .pts,.mrow.lost .nm{color:var(--ink-3)}
-.mrow.won .pts{color:var(--green)}
-.mfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;font-size:11.5px;color:var(--ink-3)}
-.wp{display:flex;height:6px;border-radius:5px;overflow:hidden;background:#26324a;margin-top:8px}
-.wp i{display:block;height:100%}
-.wp .a{background:var(--blue)}
-.wp .b{background:#64748b}
-.odds{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
-.odds b{color:var(--ink-strong)}
+/* ------------------------------ matchups ------------------------ */
+/* Scoreboard: every matchup as a small tile; on This Week the tiles pick
+   which matchup the head-to-head panel below shows. */
+.scoreboard{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.mtile{display:block;width:100%;text-align:left;font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--radius);padding:10px 12px;cursor:pointer;text-decoration:none}
+.mtile:hover{background:var(--card-2);text-decoration:none}
+.mtile:focus-visible{outline:2px solid var(--blue-soft);outline-offset:2px}
+.mtile.you{border-color:rgba(59,130,246,.45)}
+.mtile[aria-selected="true"]{border-color:var(--blue);background:#1c2a44;box-shadow:inset 0 0 0 1px var(--blue)}
+.mt-line{display:flex;align-items:center;gap:8px;padding:3px 0;min-width:0}
+.mt-line .av{width:22px;height:22px}
+.mt-nm{flex:1 1 auto;min-width:0;font-weight:650;font-size:13.5px;color:var(--ink-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-pts{font-weight:800;font-size:15px;color:var(--ink-strong);font-variant-numeric:tabular-nums}
+.mt-proj{font-weight:600;font-size:13px;color:var(--ink-3)}
+.mt-line.lost .mt-nm,.mt-line.lost .mt-pts{color:var(--ink-3)}
+.mt-line.won .mt-pts{color:var(--green)}
+.mt-wp{display:block;height:4px;border-radius:3px;background:#475569;margin-top:7px;overflow:hidden}
+.mt-wp i{display:block;height:100%;background:var(--blue)}
+.mt-foot{display:block;margin-top:6px;font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Head-to-head panel: a face-off header, then both lineups mirrored around
+   a centre spine of lineup slots, the way the Sleeper app lays out a matchup. */
+.mdetail{--spine:26px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.mdetail.you{border-color:rgba(59,130,246,.45)}
+.md-head{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto minmax(0,1fr);align-items:center;gap:16px;padding:16px 18px 10px}
+.md-team{display:flex;align-items:center;gap:11px;min-width:0}
+.md-team.b{flex-direction:row-reverse;text-align:right}
+.md-av{width:44px;height:44px}
+.md-id{min-width:0}
+.md-nm{font-weight:750;font-size:16px;color:var(--ink-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.md-nm a{color:inherit}
+.md-rec{font-size:12px;color:var(--ink-3);margin-top:2px}
+.md-odds b{color:var(--ink-strong)}
+.md-score{text-align:right;font-variant-numeric:tabular-nums;min-width:92px}
+.md-score.b{text-align:left}
+.md-score b{display:block;font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--ink-strong);line-height:1.05}
+.md-score span{font-size:12px;color:var(--ink-3)}
+.md-score.won b{color:var(--green)}
+.md-score.lost b{color:var(--ink-3)}
+.md-vs{font-size:12px;font-weight:600;color:var(--ink-4)}
+.md-wp{height:6px;margin:2px 18px 0;border-radius:4px;background:#475569;overflow:hidden}
+.md-wp i{display:block;height:100%;background:var(--blue)}
+.md-story{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;padding:8px 18px 12px;font-size:12px;color:var(--ink-3)}
+.md-story strong{color:var(--ink-2);font-weight:650;text-align:center}
+.md-story span:last-child{text-align:right}
+
+.h2h{border-top:1px solid var(--line);
+  background:linear-gradient(90deg,transparent calc(50% - var(--spine)),var(--bg-2) calc(50% - var(--spine)),var(--bg-2) calc(50% + var(--spine)),transparent calc(50% + var(--spine)))}
+.lu-row{display:grid;grid-template-columns:minmax(0,1fr) 78px calc(var(--spine) * 2) 78px minmax(0,1fr);align-items:center;min-height:54px;border-bottom:1px solid var(--line-soft)}
+.lu-row:last-child{border-bottom:0}
+.lu-p{display:flex;align-items:center;gap:10px;padding:7px 10px 7px 16px;min-width:0}
+.lu-p.b{flex-direction:row-reverse;text-align:right;padding:7px 16px 7px 10px}
+.lu-p.empty{color:var(--ink-4)}
+.lu-id{min-width:0}
+.lu-nm{display:flex;align-items:center;gap:6px;font-weight:650;font-size:13.5px;color:var(--ink-strong);min-width:0}
+.lu-p.b .lu-nm{justify-content:flex-end}
+.lu-nm .full,.lu-nm .short{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.lu-nm .short{display:none}
+.lu-sub{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:11.5px;color:var(--ink-4);white-space:nowrap;overflow:hidden}
+.lu-p.b .lu-sub{justify-content:flex-end}
+.lu-sub .pos{min-width:24px;height:16px;font-size:9.5px}
+.lu-sub .g.live{color:#fdba74;font-weight:700}
+.inj{flex:0 0 auto;font-size:9.5px;font-weight:800;padding:0 4px;border-radius:3px;line-height:15px;background:rgba(251,191,36,.16);color:#fde68a}
+.inj.bad{background:rgba(239,68,68,.18);color:#fca5a5}
+.lu-pts{font-variant-numeric:tabular-nums;text-align:right;padding:0 10px}
+.lu-pts.b{text-align:left}
+.lu-pts b{display:block;font-size:15px;font-weight:750;color:var(--ink-strong)}
+.lu-pts small{display:block;font-size:11px;color:var(--ink-4);margin-top:1px}
+.lu-pts.trail b{color:var(--ink-4);font-weight:600}
+.lu-slot{justify-self:center;width:44px;padding:3px 0;border-radius:999px;border:1px solid var(--line);background:var(--card);
+  font-size:10px;font-weight:800;letter-spacing:.03em;color:var(--ink-3);text-align:center}
+.md-bench{border-top:1px solid var(--line)}
+.md-bench > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;padding:10px 14px;
+  font-size:12.5px;font-weight:650;color:var(--ink-2)}
+.md-bench > summary::-webkit-details-marker{display:none}
+.md-bench > summary:hover{background:var(--card-2)}
+.md-bench > summary .lu-slot{justify-self:auto}
+.md-bench[open] > summary{border-bottom:1px solid var(--line)}
+.md-bench[open] .chev{transform:rotate(180deg)}
+.md-bench .h2h{border-top:0}
 
 .lineups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .lineup,.tside{min-width:0}
@@ -640,6 +702,7 @@ a.mgr-link:hover .mgr-name{color:var(--blue-soft)}
   .g4{grid-template-columns:repeat(2,minmax(0,1fr))}
   .g3{grid-template-columns:repeat(2,minmax(0,1fr))}
   .tsides,.lineups{grid-template-columns:minmax(0,1fr)}
+  .scoreboard{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:640px){
   .topbar .sync{display:none}
@@ -651,6 +714,33 @@ a.mgr-link:hover .mgr-name{color:var(--blue-soft)}
   .range-chart .rc-row{grid-template-columns:96px 1fr 54px}
   .mgr-team{max-width:140px}
   .tcard-right .tier .basis{display:none}
+  /* matchups: swipeable scoreboard, stacked face-off, compact mirrored lineups */
+  .scoreboard{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;gap:8px;margin:0 -16px 12px;padding:0 16px 4px;scrollbar-width:none}
+  .scoreboard::-webkit-scrollbar{display:none}
+  .mtile{flex:0 0 74%;scroll-snap-align:start}
+  .mdetail{--spine:19px;margin:0 -6px}
+  .md-head{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"ta tb" "sa sb";gap:10px 12px;padding:14px 14px 8px}
+  .md-team.a{grid-area:ta}.md-team.b{grid-area:tb}
+  .md-score.a{grid-area:sa;text-align:left}.md-score.b{grid-area:sb;text-align:right}
+  .md-vs{display:none}
+  .md-av{width:32px;height:32px}
+  .md-nm{font-size:14px}
+  .md-score b{font-size:26px}
+  .md-wp{margin:2px 14px 0}
+  .md-story{grid-template-columns:auto 1fr auto;padding:8px 14px 10px;font-size:11px}
+  .lu-row{grid-template-columns:minmax(0,1fr) 46px calc(var(--spine) * 2) 46px minmax(0,1fr);min-height:48px}
+  .lu-p{padding:6px 4px 6px 10px}
+  .lu-p.b{padding:6px 10px 6px 4px}
+  .lu-p .av{display:none}
+  .lu-nm{font-size:12.5px;gap:4px}
+  .lu-nm .full{display:none}
+  .lu-nm .short{display:block}
+  .lu-sub{gap:4px;font-size:10.5px}
+  .lu-sub .opp,.lu-pts .pj{display:none}
+  .lu-pts{padding:0 4px}
+  .lu-pts b{font-size:13.5px}
+  .lu-pts small{font-size:10px}
+  .lu-slot{width:34px;font-size:9px}
 }
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
