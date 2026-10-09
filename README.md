@@ -26,7 +26,7 @@ The choice is remembered in that browser only.
 | Playoffs | Real brackets with scores and seeds, championship and consolation sides |
 | Champions | Trophy room, each title team, and how everyone has finished |
 | Managers | Career table, sortable; click a name for the full profile (record showcase, career form, season by season, trading, draft report cards, rivals, best/worst weeks, winnings, this season's moves) |
-| Rosters | Every roster's market value, last 30 days of value for your team, and positional strengths |
+| Rosters | Every roster's FantasyCalc market value, last 30 days of value for your team, and positional strengths |
 | Head to Head | All-time grid (playoffs included); click any cell for every meeting |
 | Trades | Every trade, graded (see below), filterable by manager, season and grade; a League Overview with each manager's trade record, a trade-partner grid and the most-traded players |
 | Waivers | Every pickup graded on what it scored in your lineup; team summary, biggest bids, best pickups |
@@ -51,8 +51,9 @@ assets/views-overview.js   Overview, This Week, Outlook
 assets/views-league.js     Standings, Playoffs, Champions, Head to Head, Record Book, Managers, Money
 assets/views-moves.js      Trades, Waivers, Draft, Rosters
 assets/app.js              routing, startup, sidebar, sortable tables
-assets/values-history.json weekly market values back to 2022 (see "Market values" below)
-tools/build_values.py      rebuilds values-history.json
+assets/values/             FantasyCalc values and Sleeper projections, saved daily (see "Market values")
+tools/update_values.py     pulls today's values and projections into assets/values/
+.github/workflows/         the daily GitHub Action that runs update_values.py
 ```
 
 ## Viewing it locally
@@ -61,8 +62,8 @@ Double-click **`serve.bat`**. It starts a small local server and opens the site 
 <http://localhost:8000>. Leave that window open while browsing, and close it when done.
 
 (Opening `index.html` directly mostly works too, but browsers block a page opened from a
-file from reading other files next to it, so the trade grades lose their market-value
-history that way.)
+file from reading other files next to it, so trade grades and roster values lose their
+FantasyCalc values that way.)
 
 ## Naming managers who left the league
 
@@ -293,20 +294,31 @@ count. Points-for, PPG and the Record Book stay regular season.
 
 ### Trade grades
 
-Every trade is measured three ways, the same three the site this was modelled on uses:
+**Starter points decide every grade**: what the players a team received scored in its
+starting lineup, from the trade until they left that roster. Bench points don't count;
+playoff weeks count while the team was still playing for the title or third place. The gap
+between the two sides maps to Even, Slight Edge, Good Win, Clear Win or Fleece (and the
+matching loss on the other side). The cut-offs are `TRADE_BANDS` in `assets/grades.js`.
 
-1. **Value at trade**: what each side received, at market value the week the trade went
-   through (DynastyProcess's weekly trade values, built from FantasyPros rankings).
-2. **Value change**: how those values moved afterwards, to this week for the live season and
-   to the end of the season for past ones.
-3. **Starter points**: what the players scored in the receiving team's starting lineup, from
-   the trade until they left that roster. Bench points don't count; playoff weeks count while
-   the team was still playing for the title or third place.
+**This season's trades** haven't played out yet, so the rest of the regular season is filled
+in with Sleeper's weekly projections, scored with the league's own settings, for players
+still on the roster that got them. Each remaining week a player counts in full if he's in
+his team's best projected lineup, and for a quarter of his projection if he's on the bench
+(`BENCH_SHARE`). Same cut-offs, so the grade slides into the final one as weeks are played.
 
-Finished seasons are graded on starter points; the live season is graded on current market
-value until it ends. The gap between the two sides maps to Even, Slight Edge, Good Win,
-Clear Win or Fleece (and the matching loss on the other side). The cut-offs are
-`TRADE_BANDS` in `assets/grades.js`. FAAB is shown but not valued.
+Why projections rather than trade values: on the league's 70 past trades with a clear winner
+(15+ starter points), projections at the time of the trade picked the eventual winner 61-74%
+of the time, depending on the variant. The dynasty trade values the site used before
+(DynastyProcess) were a coin flip at 50%. If the projections file ever fails to load, live
+trades fall back to being graded on FantasyCalc value.
+
+**Market value** is shown alongside for context: FantasyCalc's value of what each side
+received on the day of the trade (only trades from October 2026 on have one), and today
+(or at the end of a past season). FAAB is shown but not valued.
+
+A trade Sleeper processes a week or two after it's proposed is still followed: a received
+player can be missing from the roster for up to two weeks after the trade week before he
+counts as gone.
 
 Waiver pickups are graded on the starter points they produced for you against the FAAB paid
 (`waiverTier` in `assets/grades.js`). Draft picks are graded in hindsight: points over a
@@ -315,14 +327,42 @@ this league (`DRAFT_BANDS`).
 
 ### Market values
 
-DynastyProcess publishes new values every week. The site reads this week's file straight
-from GitHub, and `assets/values-history.json` holds every in-season week back to 2022 so a
-trade can be priced the week it happened. Trades made after that file was built look up
-their week on GitHub automatically and remember it, so the file never has to be updated.
-If you ever want to refresh it anyway (once a season is plenty), run
-`python3 tools/build_values.py` and commit the result. The values are dynasty values, so
-young players carry a premium a redraft league wouldn't pay; that's why finished seasons are
-graded on points instead.
+Trade and roster values come from [FantasyCalc](https://fantasycalc.com)'s API, set to this
+league's format: **redraft, 1 QB, 12 teams, full PPR, no TE premium** (`FORMAT` at the top of
+`tools/update_values.py`; change it there if the league ever changes).
+
+FantasyCalc's terms ask sites to cache the API on their own server and pull it about once a
+day, so league mates' browsers never call it. Instead, a GitHub Action
+(`.github/workflows/fantasycalc-values.yml`) runs `tools/update_values.py` every morning at
+4:17 am Arizona time and commits the result to `assets/values/`, which Cloudflare deploys
+like any other commit:
+
+- `current.json`: today's value and FantasyCalc's own 30-day trend for each player
+  (about 200 players; anyone past that, plus kickers and defenses, is worth 0)
+- `history-<season>.json`: one snapshot a day from August through January
+- `projections.json`: Sleeper's projected points for every player in each remaining
+  regular-season week of the live season, scored with the league's settings. The league
+  is read from `CONFIG.leagueId` in `assets/data.js`. Sleeper's projections feed is
+  public but undocumented; if it ever changes, live trades fall back to FantasyCalc value
+
+FantasyCalc only publishes today's values, so the site keeps its own history, starting
+October 9, 2026. Trades from before then have no trade-day value: their cards show today's
+value (live season) or starter points only (past seasons). They're graded exactly as before,
+since past seasons are graded on starter points and the live season on today's value.
+
+Good to know:
+
+- The Action commits once a day as `github-actions[bot]`. Its changes only ever touch
+  `assets/values/`, so VS Code's **Sync** just pulls them in alongside your own work.
+- To pull values right away, open the repo on GitHub → **Actions** → **FantasyCalc values**
+  → **Run workflow**. If a run fails (FantasyCalc or Sleeper down, say), the other source is
+  still saved, GitHub emails you, and the site keeps using the last saved values; the
+  Rosters page shows their date.
+- GitHub pauses scheduled Actions in a repo with no activity for 60 days. If that happens
+  over the off-season, re-enable it from the same Actions page.
+- FantasyCalc requires a visible credit and link wherever its values appear. The footer on
+  every page and the notes on the Trades and Rosters pages do that; keep them if you edit
+  those pages.
 
 ### Live scores and "is this week over?"
 

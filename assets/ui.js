@@ -102,7 +102,7 @@ function tierChip(side, basis, showBasis) {
   if (!side) return '';
   const loss = side.result === 'L';
   const cls = side.tier === 'even' ? 'tier-even' : (loss ? 'tier-loss-' : 'tier-') + side.tier;
-  const b = showBasis ? `<span class="basis">${basis === 'realized' ? 'Realized pts:' : 'Market:'}</span>` : '';
+  const b = showBasis ? `<span class="basis">${basis === 'realized' ? 'Realized pts:' : basis === 'projected' ? 'Projected pts:' : 'Market:'}</span>` : '';
   return `<span class="tier ${cls}">${b}${esc(side.label)}</span>`;
 }
 

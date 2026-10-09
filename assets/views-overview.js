@@ -341,7 +341,7 @@ async function tradeHighlights(list) {
   return `<div style="margin-bottom:6px" class="small muted">Biggest fleeces</div>
     ${fleeces.map(g => tradeCard(g, { compact: true })).join('')}
     <p class="note" style="margin:4px 0 14px">Finished seasons are graded on what each side’s players scored in their new team’s starting lineup.
-      The ${MODEL.liveSeason ? esc(MODEL.liveSeason.season) : 'current'} season is graded on market value until it’s over.</p>
+      The ${MODEL.liveSeason ? esc(MODEL.liveSeason.season) : 'current'} season adds Sleeper’s projections for the weeks still to come.</p>
     <div class="grid g2">
       <div class="panel panel-green"><div class="panel-h">Best Traders</div><div class="rank-list">${best.map(rankRow).join('')}</div></div>
       <div class="panel panel-red"><div class="panel-h">Worst Traders</div><div class="rank-list">${worst.map(rankRow).join('')}</div></div>

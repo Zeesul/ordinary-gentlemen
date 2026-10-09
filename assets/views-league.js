@@ -533,7 +533,7 @@ views.manager = async params => {
     return `<div class="grid g4" style="margin-bottom:12px">
       ${statCard({ label: 'Trades', value: r.trades, sub: `${r.w}W-${r.l}L-${r.e}E`, acc: 'blue' })}
       ${statCard({ label: 'Net Starter Pts', value: signed(r.netPts, n0), sub: pos ? `${ordinal(pos)} of ${ranked.length} traders` : 'fewer than 3 trades', acc: r.netPts >= 0 ? 'green' : 'red' })}
-      ${statCard({ label: 'Value at Trade', value: signed(r.netThen, n0), sub: 'market value gained on paper', acc: 'violet' })}
+      ${statCard({ label: 'Value at Trade', value: r.priced ? signed(r.netThen, n0) : '—', sub: r.priced ? `FantasyCalc value gained on paper, ${r.priced} trade${r.priced === 1 ? '' : 's'}` : 'no FantasyCalc trade-day values yet', acc: 'violet' })}
       ${statCard({ label: 'Best Trade', value: r.best ? esc(r.best.side.label) : '—', sub: r.best ? `${esc(r.best.trade.season)} Wk ${r.best.trade.week}` : '', acc: 'amber' })}
     </div>${mine.slice(0, 5).map(g => tradeCard(g, { perspective: m.id })).join('')}
     <p class="note"><a href="${hrefWith('trades', { mgr: m.id })}">All of ${esc(m.name)}'s trades &rarr;</a></p>`;

@@ -12,19 +12,12 @@ const CONFIG = {
   playerKey: 'log_players_v2',
   txnKey: 'log_txn_v2_',
   projKey: 'log_proj_v1_',
-  valuesLiveKey: 'log_values_live_v1',
-  valuesSnapKey: 'log_values_snap_v1_',
   viewerKey: 'log_viewer',
   projApi: 'https://api.sleeper.app',
-  // DynastyProcess publishes weekly FantasyPros-based trade values on GitHub.
-  // assets/values-history.json holds every in-season week back to 2022; the
-  // current week is read live, and anything in between is looked up by date.
-  valuesHistory: 'assets/values-history.json',
-  valuesLive: 'https://raw.githubusercontent.com/dynastyprocess/data/master/files/values-players.csv',
-  valuesRaw: 'https://raw.githubusercontent.com/dynastyprocess/data/',
-  valuesCommits: 'https://api.github.com/repos/dynastyprocess/data/commits?path=files/values-players.csv&per_page=1&until=',
-  valuesLiveHours: 12,
-  liveMins: 3,            // a live season's scores are re-pulled after this long
+  // FantasyCalc trade values, saved into the repo once a day by
+  // tools/update_values.py (see "Market values" below and in the README).
+  valuesDir: 'assets/values/',
+  liveMins: 3,           // a live season's scores are re-pulled after this long
   projCacheMins: 60,
   cacheHours: 3,
   playerCacheDays: 7,
@@ -87,7 +80,7 @@ const fmtDate = ms => {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 const fmtMonth = ms => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
-/** UTC calendar date of a timestamp, the way DynastyProcess dates its files. */
+/** UTC calendar date of a timestamp, the way the value snapshots are dated. */
 const isoDay = ms => new Date(ms).toISOString().slice(0, 10);
 
 /** "2h ago" / "3d ago" style relative time. */
@@ -719,167 +712,122 @@ async function loadAllTransactions() {
 }
 
 /* ------------------------------------------------------------------
-   Market values (DynastyProcess), for trade grades and roster values.
+   Market values (FantasyCalc) and rest-of-season projections (Sleeper),
+   for trade grades and roster values.
 
-   VALUES.history  weekly snapshots shipped with the site
-   VALUES.extra    snapshots fetched at runtime for dates newer than that
-   VALUES.live     this week's values, read straight from DynastyProcess
+   FantasyCalc: redraft trade values for this league's format (1 QB, 12
+   teams, full PPR, no TE premium). Its terms ask sites to cache the API
+   on their own server and pull it about once a day, so browsers never
+   call it. Sleeper: weekly projected stat lines for every remaining
+   regular-season week, scored with this league's own settings.
+
+   A GitHub Action runs tools/update_values.py every morning and commits
+   what it gets into assets/values/:
+
+     current.json           today's FantasyCalc value and 30-day trend
+     history-<season>.json  one FantasyCalc snapshot a day, August to
+                            January, for trade-day and end-of-season values
+     projections.json       projected points per player per remaining
+                            week of the live season, for live trade grades
+
+   FantasyCalc only publishes today's values, so the history starts the
+   day the site switched to it (October 2026). Trades from before then
+   have no trade-day value; they're graded the same way as always.
+
+   VALUES.live     current.json: { date, v: {pid: value}, trend: {pid: 30-day change} }
+   VALUES.history  history files loaded so far, by season
+   VALUES.proj     projections.json: { season, date, weeks: [n...], v: {pid: [pts per week]} }
    ------------------------------------------------------------------ */
-const VALUES = { history: null, extra: [], live: null, ready: null };
+const VALUES = { live: null, seasons: [], history: {}, loading: {}, proj: null, ready: null };
+const FANTASYCALC = 'https://fantasycalc.com';
+/** A trade-day snapshot older than this many days doesn't count. */
+const SNAPSHOT_MAX_AGE = 7;
 
-function parseValuesCsv(text, fpMap) {
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return { date: '', v: {}, names: {} };
-  const head = lines[0].split(',').map(h => h.replace(/"/g, ''));
-  const ix = k => head.indexOf(k);
-  const iName = ix('player'), iPos = ix('pos'), iVal = ix('value_1qb'), iDate = ix('scrape_date'), iFp = ix('fp_id');
-  const v = {}, unmatched = [];
-  let date = '';
-  lines.slice(1).forEach(line => {
-    // fields can contain commas inside quotes (names like "Smith, Jr.")
-    const cells = [];
-    let cur = '', q = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') q = !q;
-      else if (c === ',' && !q) { cells.push(cur); cur = ''; }
-      else cur += c;
-    }
-    cells.push(cur);
-    const val = Number(cells[iVal]) || 0;
-    if (!date && cells[iDate]) date = cells[iDate];
-    if (val <= 0) return;
-    const sid = fpMap[cells[iFp]];
-    if (sid) v[sid] = val;
-    else unmatched.push({ name: cells[iName], pos: cells[iPos], val });
-  });
-  // Players newer than the shipped id map (next year's rookies) are matched
-  // by name and position against Sleeper's player list.
-  if (unmatched.length && PLAYERS) {
-    const norm = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '').replace(/(jr|sr|ii|iii|iv)$/, '');
-    const byName = {};
-    Object.keys(PLAYERS).forEach(id => {
-      const p = PLAYERS[id];
-      byName[norm(p[0]) + '|' + p[1]] = id;
-    });
-    unmatched.forEach(u => {
-      const id = byName[norm(u.name) + '|' + u.pos];
-      if (id && !v[id]) v[id] = u.val;
-    });
-  }
-  return { date, v };
-}
+/** Attribution FantasyCalc requires next to anything built from its values. */
+const fcLink = text => `<a href="${FANTASYCALC}" target="_blank" rel="noopener">${text || 'FantasyCalc'}</a>`;
 
 async function loadValues() {
   if (VALUES.ready) return VALUES.ready;
   VALUES.ready = (async () => {
+    // Leftovers from the old DynastyProcess values (live CSV and weekly snapshots).
     try {
-      const res = await fetch(CONFIG.valuesHistory);
-      if (res.ok) VALUES.history = await res.json();
-    } catch (err) { console.warn('[values] history', err); }
-    const fpMap = (VALUES.history && VALUES.history.fp) || {};
-
-    const hit = safeGet(CONFIG.valuesLiveKey);
-    if (hit && hit.ts && Date.now() - hit.ts < CONFIG.valuesLiveHours * 3600e3 && hit.v) {
-      VALUES.live = { date: hit.date, v: hit.v };
-    } else {
-      try {
-        const res = await fetch(CONFIG.valuesLive, { cache: 'no-store' });
-        if (res.ok) {
-          VALUES.live = parseValuesCsv(await res.text(), fpMap);
-          safeSet(CONFIG.valuesLiveKey, { ts: Date.now(), date: VALUES.live.date, v: VALUES.live.v });
-        }
-      } catch (err) { console.warn('[values] live', err); }
-    }
-    // runtime snapshots fetched on an earlier visit
-    try {
-      Object.keys(localStorage).forEach(k => {
-        if (k.indexOf(CONFIG.valuesSnapKey) !== 0) return;
-        const s = safeGet(k);
-        if (s && s.date && s.v) VALUES.extra.push(s);
-      });
+      Object.keys(localStorage).forEach(k => { if (k.indexOf('log_values_') === 0) localStorage.removeItem(k); });
     } catch (_) { /* ignore */ }
+    const getJson = name => fetch(CONFIG.valuesDir + name).then(res => res.ok ? res.json() : null)
+      .catch(err => { console.warn('[values] ' + name, err); return null; });
+    const [cur, proj] = await Promise.all([getJson('current.json'), getJson('projections.json')]);
+    if (cur && cur.v) {
+      const v = {}, trend = {};
+      Object.keys(cur.v).forEach(pid => {
+        const row = cur.v[pid] || [];
+        v[pid] = row[0] || 0;
+        trend[pid] = row[1] || 0;
+      });
+      VALUES.live = { date: cur.date || '', v, trend };
+      VALUES.seasons = (cur.history || []).map(String);
+    }
+    if (proj && Array.isArray(proj.weeks) && proj.v) {
+      VALUES.proj = { season: String(proj.season || ''), date: proj.date || '', weeks: proj.weeks, v: proj.v };
+    }
     return VALUES;
   })();
   return VALUES.ready;
 }
 
-function valueSnapshots() {
-  const out = [];
-  const H = VALUES.history;
-  if (H) H.dates.forEach((d, i) => out.push({ date: d, i }));
-  VALUES.extra.forEach(s => out.push({ date: s.date, snap: s }));
-  if (VALUES.live && VALUES.live.date) out.push({ date: VALUES.live.date, snap: VALUES.live });
-  out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-  return out;
+/** Projections for this season, if the saved file covers it. */
+const seasonProjections = season => VALUES.proj && VALUES.proj.season === String(season) ? VALUES.proj : null;
+
+/** Load the saved daily snapshots for these seasons (the ones that have any). */
+async function loadValueHistory(seasons) {
+  await loadValues();
+  const want = Array.from(new Set(seasons.map(String))).filter(s => VALUES.seasons.indexOf(s) !== -1);
+  await Promise.all(want.map(s => {
+    if (!VALUES.loading[s]) {
+      VALUES.loading[s] = fetch(CONFIG.valuesDir + 'history-' + s + '.json')
+        .then(res => res.ok ? res.json() : null)
+        .then(j => { if (j && Array.isArray(j.dates) && j.v) VALUES.history[s] = j; })
+        .catch(err => console.warn('[values] history', s, err));
+    }
+    return VALUES.loading[s];
+  }));
 }
 
-/** A player's value in one snapshot. */
-function snapValue(s, pid) {
-  if (!s) return 0;
-  if (s.snap) return s.snap.v[pid] || 0;
-  const H = VALUES.history;
-  const arr = H && H.v[pid];
-  return arr ? (arr[s.i] || 0) * (H.scale || 1) : 0;
-}
-
-/** Latest snapshot on or before a date (YYYY-MM-DD). */
-function snapshotOn(date) {
-  const list = valueSnapshots();
-  let pick = null;
-  list.forEach(s => { if (s.date <= date) pick = s; });
-  return pick || list[0] || null;
-}
-
-/** First snapshot on or after a date. */
-function snapshotAfter(date) {
-  const list = valueSnapshots();
-  return list.find(s => s.date >= date) || list[list.length - 1] || null;
-}
-
-const valueOn = (pid, date) => snapValue(snapshotOn(date), pid);
-const valueNow = pid => VALUES.live ? (VALUES.live.v[pid] || 0)
-  : snapValue(valueSnapshots().slice(-1)[0], pid);
-
-/** The season's closing value: the first snapshot after its championship week. */
-function seasonEndDate(season) {
-  return (Number(season) + 1) + '-01-08';
-}
+const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
+/** "Oct 9, 2026" for a snapshot date (YYYY-MM-DD). */
+const fmtValuesDate = d => d ? fmtDate(Date.parse(d + 'T12:00:00Z')) : 'today';
 
 /**
- * Make sure there is a snapshot close to each of these dates. Dates newer
- * than the shipped history (trades from the last few weeks) are looked up on
- * GitHub, once, and remembered for good: a week's values never change.
+ * The snapshot in effect on a date (YYYY-MM-DD): the latest one on or
+ * before it, if that's no more than `maxAge` days earlier. Null when the
+ * saved history doesn't reach back that far.
  */
-async function ensureSnapshots(dates) {
-  await loadValues();
-  const H = VALUES.history;
-  const last = H && H.dates.length ? H.dates[H.dates.length - 1] : '0000';
-  const liveDate = VALUES.live && VALUES.live.date;
-  const need = Array.from(new Set(dates.filter(d => d > last && (!liveDate || d < liveDate))));
-  const have = new Set(VALUES.extra.map(s => s.date));
-  const fpMap = (H && H.fp) || {};
-  for (const d of need.slice(0, 6)) {
-    // already have the snapshot that was current on that date?
-    const s = snapshotOn(d);
-    if (s && s.date > last && (!liveDate || s.date !== liveDate)) continue;
-    try {
-      const res = await fetch(CONFIG.valuesCommits + d + 'T23:59:59Z');
-      if (!res.ok) break;                           // rate limited: use what we have
-      const list = await res.json();
-      const c = Array.isArray(list) && list[0];
-      if (!c) continue;
-      const cDate = (c.commit && c.commit.committer && c.commit.committer.date || '').slice(0, 10);
-      if (!cDate || cDate <= last || have.has(cDate)) continue;
-      const raw = await fetch(CONFIG.valuesRaw + c.sha + '/files/values-players.csv');
-      if (!raw.ok) continue;
-      const parsed = parseValuesCsv(await raw.text(), fpMap);
-      const snap = { date: parsed.date || cDate, v: parsed.v };
-      VALUES.extra.push(snap);
-      have.add(snap.date);
-      safeSet(CONFIG.valuesSnapKey + snap.date, snap);
-    } catch (err) { console.warn('[values] snapshot', d, err); break; }
-  }
+function snapshotOn(date, maxAge) {
+  let best = null;
+  Object.keys(VALUES.history).forEach(season => {
+    const H = VALUES.history[season];
+    H.dates.forEach((d, i) => { if (d <= date && (!best || d > best.date)) best = { date: d, H, i }; });
+  });
+  const L = VALUES.live;
+  if (L && L.date && L.date <= date && (!best || L.date > best.date)) best = { date: L.date, live: true };
+  if (!best || daysBetween(best.date, date) > (maxAge == null ? SNAPSHOT_MAX_AGE : maxAge)) return null;
+  return best;
+}
+
+/** A player's value in one snapshot (0 if he wasn't in FantasyCalc's list). */
+function snapValue(s, pid) {
+  if (!s) return 0;
+  if (s.live) return VALUES.live.v[pid] || 0;
+  const arr = s.H.v[pid];
+  return arr ? (arr[s.i] || 0) : 0;
+}
+
+const valueNow = pid => VALUES.live ? (VALUES.live.v[pid] || 0) : 0;
+/** FantasyCalc's own 30-day change for a player. */
+const trendNow = pid => VALUES.live ? (VALUES.live.trend[pid] || 0) : 0;
+
+/** A finished season's closing values: the last snapshot before this date. */
+function seasonEndDate(season) {
+  return (Number(season) + 1) + '-01-08';
 }
 
 /* ------------------------------------------------------------------

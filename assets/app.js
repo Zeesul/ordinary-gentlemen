@@ -216,8 +216,8 @@ async function render() {
 
 function footerHtml() {
   return `<footer class="footer">
-    Data pulled live from the Sleeper API and built in your browser. Market values from
-    <a href="https://github.com/dynastyprocess/data" target="_blank" rel="noopener">DynastyProcess</a>.
+    Data pulled live from the Sleeper API and built in your browser. Player trade values from
+    ${fcLink('FantasyCalc.com')} (redraft, 1 QB, 12 teams, PPR).
   </footer>`;
 }
 
@@ -311,14 +311,14 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#refreshBtn').classList.add('spin');
     try {
       Object.keys(localStorage).forEach(k => {
-        if (k.indexOf('log_') === 0 && k !== CONFIG.viewerKey &&
-            k.indexOf(CONFIG.valuesSnapKey) !== 0 && k.indexOf(CONFIG.playerKey) !== 0) {
+        if (k.indexOf('log_') === 0 && k !== CONFIG.viewerKey && k.indexOf(CONFIG.playerKey) !== 0) {
           localStorage.removeItem(k);
         }
       });
     } catch (_) { /* ignore */ }
     Object.keys(TXN_MEMO).forEach(k => { delete TXN_MEMO[k]; });
     Object.keys(PROJ_MEMO).forEach(k => { delete PROJ_MEMO[k]; });
+    Object.assign(VALUES, { live: null, seasons: [], history: {}, loading: {}, proj: null, ready: null });
     MEMO.clear();
     start(true);
   });

@@ -2,16 +2,25 @@
    grades.js — trade grades, waiver grades and draft grades.
 
    Trades use three measures:
-     1. Trade-day value  what each side got, at market value, the week of
-                         the trade (DynastyProcess's weekly trade values)
+     1. Trade-day value  what each side got, at market value, the day of
+                         the trade (FantasyCalc redraft values, saved daily
+                         since October 2026; older trades don't have one)
      2. Value change     how those values moved since: to today for the
                          live season, to the end of the season otherwise
      3. Realized points  what the players actually scored in the receiving
                          team's starting lineup, from the trade until they
                          left that roster. Bench points don't count.
    A finished season is graded on realized points. The season in progress
-   is graded on current market value until there's a season of production
-   to judge, and says so on every card.
+   is graded on realized points so far plus Sleeper's projected points for
+   the rest of the regular season (players still on the roster only), so
+   the grade slides into the final one as the weeks are played. Each
+   remaining week, a player counts in full if he's in his team's best
+   projected lineup and for BENCH_SHARE of his projection if not.
+   Backtested on the league's 70 past trades with a clear winner (15+ starter
+   points): projections picked the eventual winner 61-74% of the time
+   depending on the variant, against 50% for the dynasty trade values the
+   site used before (DynastyProcess). If the projections file is missing,
+   live trades fall back to FantasyCalc market value.
 
    Waiver pickups are graded on the points they scored in your lineup,
    against what you paid. Draft picks are graded in hindsight: what the
@@ -26,13 +35,22 @@ const TRADE_TIERS = [
   { key: 'clear', win: 'Clear Win', lose: 'Clear Loss', verb: 'crushed' },
   { key: 'fleece', win: 'Fleece', lose: 'Fleeced', verb: 'fleeced' }
 ];
-/* Gap needed for each tier above Even: market value points, or realized
+/* Gap needed for each tier above Even: FantasyCalc value points, or realized
    starter points. Tuned on this league's own trades so most deals land in
-   the middle tiers and a Fleece really is one. */
+   the middle tiers and a Fleece really is one. For scale, FantasyCalc's
+   redraft board tops out around 10,500 (the overall RB1), a weekly flex
+   starter sits near 1,500-3,000 and the last player listed near 0. */
 const TRADE_BANDS = {
   market: [500, 1500, 3000, 5000],
-  realized: [15, 40, 80, 130]
+  realized: [15, 40, 80, 130],
+  // starter points so far + projected points: same units, same cut-offs
+  projected: [15, 40, 80, 130]
 };
+/* A bench player's share of his projection: bench players do start now and
+   then, through injuries and byes nobody has projected yet. On past trades
+   this did a little better than 0, 0.5 or full credit (rank correlation
+   with the real result 0.49, against 0.42 for counting everyone in full). */
+const BENCH_SHARE = 0.25;
 const tierIndex = (gap, bands) => {
   let i = 0;
   bands.forEach((b, k) => { if (gap >= b) i = k + 1; });
@@ -106,8 +124,10 @@ function followPlayer(s, pid, rid, fromWeek, opts) {
     const lu = s.lineups && s.lineups[w] && s.lineups[w][rid];
     const on = !!(lu && lu.pp && lu.pp[pid] != null);
     if (!on) {
-      // the trade week's snapshot can predate the move; allow that one miss
-      if (!seen && w === fromWeek) continue;
+      // The trade week's snapshot can predate the move, and Sleeper sometimes
+      // processes a trade a week or two after it's proposed: allow misses
+      // until he first shows up, for up to two weeks after the trade week.
+      if (!seen && w <= fromWeek + 2) continue;
       break;
     }
     seen = true;
@@ -120,12 +140,42 @@ function followPlayer(s, pid, rid, fromWeek, opts) {
   return { startedPts: pts, startedWeeks: started, rosterWeeks: rostered, totalPts: total, left };
 }
 
+/**
+ * Projected starter points over weeks `from` to `to` for every player on a
+ * roster: full projection in the weeks he makes the roster's best projected
+ * lineup, BENCH_SHARE of it otherwise. Byes sort themselves out, since a
+ * player on bye projects 0 and his backup moves into the lineup that week.
+ */
+function projectedStarterPoints(s, roster, from, to) {
+  const P = seasonProjections(s.season);
+  const out = {};
+  roster.forEach(pid => { out[pid] = 0; });
+  if (!P) return out;
+  const slots = lineupSlots(s);
+  P.weeks.forEach((w, i) => {
+    if (w < from || w > to) return;
+    const pts = {};
+    roster.forEach(pid => { const a = P.v[pid]; pts[pid] = a ? (a[i] || 0) : 0; });
+    const start = new Set(bestLineup(pts, slots, MODEL.posOf).picks.filter(x => x.pid).map(x => x.pid));
+    roster.forEach(pid => { out[pid] += start.has(pid) ? pts[pid] : BENCH_SHARE * pts[pid]; });
+  });
+  return out;
+}
+
 /* ------------------------------------------------------------------
    Trades
    ------------------------------------------------------------------ */
 /**
- * Grade every trade in one season. Needs loadValues() (and, for trades
- * newer than the shipped history, ensureSnapshots) to have run first.
+ * Grade every trade in one season. Needs loadValues() and, for trade-day
+ * values, loadValueHistory() for the season to have run first.
+ *
+ * Market numbers are null, not 0, when FantasyCalc has nothing for that
+ * date: `hasThen` says the trade has a trade-day value, `hasNow` that it
+ * has a current (or season-end) one.
+ *
+ * Live trades also get `proj` per player and side: projected starter points
+ * from the first unplayed week through the end of the regular season, for
+ * players still on the roster that received them.
  */
 function gradeSeasonTrades(s, txns) {
   const posOf = MODEL.posOf;
@@ -134,50 +184,68 @@ function gradeSeasonTrades(s, txns) {
     lastWeek: lastFinalWeek(s),
     txnsAsc: txns.slice().sort((a, b) => a.created - b.created)
   };
-  const endSnap = s.complete ? snapshotAfter(seasonEndDate(s.season)) : null;
-  const basis = s.complete ? 'realized' : 'market';
+  const endSnap = s.complete ? snapshotOn(seasonEndDate(s.season), 14) : null;
+  const hasNow = s.complete ? !!endSnap : !!VALUES.live;
+  const P = s.complete ? null : seasonProjections(s.season);
+  const basis = s.complete ? 'realized' : P ? 'projected' : 'market';
   const bands = TRADE_BANDS[basis];
+  const regEnd = s.playoffStart - 1;
+  const projFrom = ctx.lastWeek + 1;     // first week without a final score
+  // each roster's projected starter points, worked out once per roster
+  const rosterProj = {};
+  const projOf = (rid, pid) => {
+    if (!rosterProj[rid]) {
+      const team = (s.teams || []).find(x => x.rosterId === rid);
+      rosterProj[rid] = projectedStarterPoints(s, (team && team.players) || [], projFrom, regEnd);
+    }
+    return rosterProj[rid][pid] || 0;   // not on the roster any more: nothing to add
+  };
 
   return txns.filter(t => t.type === 'trade').map(t => {
     const date = isoDay(t.created);
     const thenSnap = snapshotOn(date);
+    const hasThen = !!thenSnap;
     const sides = (t.rosters || []).map(rid => {
       const team = s.byRoster[rid];
       const got = Object.keys(t.adds || {}).filter(pid => t.adds[pid] === rid);
       const sent = Object.keys(t.drops || {}).filter(pid => t.drops[pid] === rid);
       const players = got.map(pid => {
         const f = followPlayer(s, pid, rid, t.week, Object.assign({ since: t.created }, ctx));
-        const then = snapValue(thenSnap, pid);
-        const now = s.complete ? snapValue(endSnap, pid) : valueNow(pid);
+        const then = hasThen ? snapValue(thenSnap, pid) : null;
+        const now = !hasNow ? null : s.complete ? snapValue(endSnap, pid) : valueNow(pid);
+        // gone from the roster: he adds nothing more to this side
+        const proj = P && !f.left ? projOf(rid, pid) : 0;
         return {
-          pid, pos: posOf(pid), then, now, gl: now - then,
+          pid, pos: posOf(pid), then, now, gl: hasThen && hasNow ? now - then : null,
           pts: f.startedPts, started: f.startedWeeks, weeks: f.rosterWeeks,
-          left: f.left
+          proj, left: f.left
         };
-      }).sort((a, b) => b.then - a.then || b.pts - a.pts);
+      }).sort((a, b) => (b.then || b.now || 0) - (a.then || a.now || 0) || b.pts - a.pts);
       const faab = (t.faab || []).filter(f => f.receiver === rid).reduce((a, f) => a + (f.amount || 0), 0);
       const faabSent = (t.faab || []).filter(f => f.sender === rid).reduce((a, f) => a + (f.amount || 0), 0);
       const picks = (t.picks || []).filter(p => p.owner_id === rid);
       return {
         rosterId: rid, ownerId: team ? team.ownerId : null,
         players, sent, faab, faabSent, picks,
-        then: sum(players.map(p => p.then)),
-        now: sum(players.map(p => p.now)),
-        pts: sum(players.map(p => p.pts))
+        then: hasThen ? sum(players.map(p => p.then)) : null,
+        now: hasNow ? sum(players.map(p => p.now)) : null,
+        pts: sum(players.map(p => p.pts)),
+        proj: sum(players.map(p => p.proj))
       };
     });
-    sides.forEach(sd => { sd.gl = sd.now - sd.then; });
+    sides.forEach(sd => { sd.gl = hasThen && hasNow ? sd.now - sd.then : null; });
 
-    const graded = sides.length >= 2 && sides.some(sd => sd.players.length);
-    const metric = sd => basis === 'realized' ? sd.pts : sd.now;
+    // A market-graded trade needs a current value to be graded.
+    const graded = sides.length >= 2 && sides.some(sd => sd.players.length) && (basis !== 'market' || hasNow);
+    const metric = sd => basis === 'realized' ? sd.pts : basis === 'projected' ? sd.pts + sd.proj : sd.now;
     const vsOthers = (sd, f) => {
       const others = sides.filter(o => o !== sd);
       return others.length ? f(sd) - mean(others.map(f)) : 0;
     };
     sides.forEach(sd => {
       sd.net = graded ? vsOthers(sd, metric) : 0;
-      sd.netThen = vsOthers(sd, x => x.then);
-      sd.netNow = vsOthers(sd, x => x.now);
+      sd.netThen = hasThen ? vsOthers(sd, x => x.then) : null;
+      sd.netNow = hasNow ? vsOthers(sd, x => x.now) : null;
       sd.netPts = vsOthers(sd, x => x.pts);
       const ti = graded ? tierIndex(Math.abs(sd.net), bands) : 0;
       sd.tier = TRADE_TIERS[ti].key;
@@ -194,6 +262,8 @@ function gradeSeasonTrades(s, txns) {
       winner: graded && ti > 0 ? top : null,
       loser: graded && ti > 0 ? bottom : null,
       gap: graded && top && bottom ? top.net - bottom.net : 0,
+      hasThen, hasNow,
+      projWeeks: P ? P.weeks.filter(w => w >= projFrom && w <= regEnd) : [],
       live: !s.complete
     };
   });
@@ -202,12 +272,9 @@ function gradeSeasonTrades(s, txns) {
 /** Grades for every started season's trades. */
 async function gradeAllTrades(txnsBySeason) {
   await loadValues();
-  // Live trades newer than the shipped value history need their week's values.
-  const live = MODEL.liveSeason;
-  if (live && txnsBySeason[live.season]) {
-    await ensureSnapshots(txnsBySeason[live.season].filter(t => t.type === 'trade')
-      .map(t => isoDay(t.created))).catch(() => null);
-  }
+  // Trade-day values come from the saved daily snapshots for each season.
+  const withTrades = Object.keys(txnsBySeason).filter(k => (txnsBySeason[k] || []).some(t => t.type === 'trade'));
+  await loadValueHistory(withTrades).catch(() => null);
   const out = [];
   MODEL.seasons.filter(s => s.started && txnsBySeason[s.season]).forEach(s => {
     gradeSeasonTrades(s, txnsBySeason[s.season]).forEach(g => out.push(g));
@@ -222,14 +289,20 @@ function tradeSummary(graded) {
     if (!sd.ownerId) return;
     const r = by[sd.ownerId] || (by[sd.ownerId] = {
       ownerId: sd.ownerId, trades: 0, w: 0, l: 0, e: 0,
-      netPts: 0, netThen: 0, netNow: 0, acquired: 0, sent: 0, best: null, worst: null
+      netPts: 0, netThen: 0, moves: 0, priced: 0, acquired: 0, sent: 0, best: null, worst: null
     });
     r.trades++;
     r.acquired += sd.players.length;
     r.sent += sd.sent.length;
     if (!g.graded) return;
     if (sd.result === 'W') r.w++; else if (sd.result === 'L') r.l++; else r.e++;
-    r.netPts += sd.netPts; r.netThen += sd.netThen; r.netNow += sd.netNow;
+    r.netPts += sd.netPts;
+    // market columns only count trades that have a trade-day value
+    if (g.hasThen) {
+      r.priced++;
+      r.netThen += sd.netThen;
+      if (g.hasNow) r.moves += sd.netNow - sd.netThen;
+    }
     // compare across seasons on one scale: each trade's gap against its own Fleece line
     const k = sd.net / TRADE_BANDS[g.basis][3];
     if (!r.best || k > r.best.k) r.best = { trade: g, side: sd, k };
